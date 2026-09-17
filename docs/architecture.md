@@ -44,6 +44,12 @@ templates/*       GitLab/Jenkins/ADO pipeline templates
 
 A Python Phase 0 prototype remains under `setwin/`. Do not extend it with Phase 1+.
 
+## Documentation
+
+- [Getting started (step by step)](getting-started.md)
+- [Plan](../PLAN.md)
+- [Third-party notices](../THIRD_PARTY.md)
+
 ## Next phase
 
 Phase 21 — Observability (OpenTelemetry, Datadog, Prometheus, Grafana, CloudWatch, Application Insights).

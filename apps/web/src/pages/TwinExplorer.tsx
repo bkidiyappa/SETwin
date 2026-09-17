@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../api";
+import { Link } from "react-router-dom";
+import { apiGet, getToken, onTokenChange } from "../api";
 
 type Artifact = {
   key: string;
@@ -11,18 +12,57 @@ type Artifact = {
 export function TwinExplorerPage() {
   const [rows, setRows] = useState<Artifact[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    apiGet<Artifact[]>("/artifacts")
-      .then(setRows)
-      .catch((err: Error) => setError(err.message));
+    let cancelled = false;
+
+    async function load(): Promise<void> {
+      if (!getToken()) {
+        setRows([]);
+        setError("Sign in on the Dashboard first, then return here.");
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const artifacts = await apiGet<Artifact[]>("/artifacts");
+        if (!cancelled) {
+          setRows(artifacts);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRows([]);
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+    return onTokenChange(() => {
+      void load();
+    });
   }, []);
 
   return (
     <div>
       <h1>Twin Explorer</h1>
       <p>Browse artifacts and workflow state.</p>
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <p className="error">
+          {error}{" "}
+          {!getToken() ? (
+            <Link to="/" style={{ color: "inherit", textDecoration: "underline" }}>
+              Go to Dashboard
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
+      {loading ? <p className="muted">Loading…</p> : null}
       <div className="panel">
         <table>
           <thead>
@@ -48,6 +88,9 @@ export function TwinExplorerPage() {
             ))}
           </tbody>
         </table>
+        {!loading && !error && rows.length === 0 ? (
+          <p className="muted">No artifacts yet. Create one with the CLI, then refresh this page.</p>
+        ) : null}
       </div>
     </div>
   );

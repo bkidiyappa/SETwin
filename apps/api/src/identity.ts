@@ -34,6 +34,15 @@ export function registerIdentityRoutes(app: FastifyInstance): void {
     if (!token) {
       return;
     }
+    // Ignore stale tokens on login so a reset DB does not block signing in again.
+    if (request.method === "POST" && request.url.split("?")[0] === "/auth/login") {
+      try {
+        request.actor = await authenticate(getSettings().databaseUrl, token);
+      } catch {
+        request.actor = undefined;
+      }
+      return;
+    }
     request.actor = await authenticate(getSettings().databaseUrl, token);
   });
 

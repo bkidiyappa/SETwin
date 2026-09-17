@@ -31,6 +31,8 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 
 ## Quick start
 
+Full walkthrough: **[Getting started](docs/getting-started.md)** (install → users → requirement → review → approve → audit → API/Web/MCP).
+
 ```bash
 pnpm install
 copy .env.example .env
@@ -59,6 +61,7 @@ Settings are loaded from environment variables prefixed with `SETWIN_`. Copy `.e
 
 ## Documentation
 
+- [Getting started (step by step)](docs/getting-started.md)
 - [Architecture](docs/architecture.md)
 - [Third-party notices](THIRD_PARTY.md)
 - [Plan](PLAN.md)

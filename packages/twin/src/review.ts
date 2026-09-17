@@ -150,6 +150,21 @@ export async function findReview(
   return null;
 }
 
+export async function findExistingReview(
+  databaseUrl: string,
+  key: string,
+  actor?: Principal,
+): Promise<ReviewRecord | null> {
+  const artifact = await getArtifact(databaseUrl, key, actor);
+  return loadReview(
+    databaseUrl,
+    artifact.currentVersion.id,
+    artifact.key,
+    artifact.currentVersion.version,
+    artifact.currentVersion.workflowState,
+  );
+}
+
 export async function addReviewFinding(
   databaseUrl: string,
   key: string,
@@ -273,7 +288,19 @@ export async function recordReviewDecision(
   });
 
   const { getWorkflow } = await import("./workflow.ts");
-  return getWorkflow(databaseUrl, artifact.key, principal);
+  const workflow = await getWorkflow(databaseUrl, artifact.key, principal);
+  const { recordAuditEvent } = await import("@setwin/audit");
+  await recordAuditEvent(databaseUrl, {
+    action: `review.${decision.toLowerCase()}`,
+    entityType: "artifact",
+    entityId: artifact.id,
+    entityKey: artifact.key,
+    version: current.version,
+    before: { workflowState: current.workflowState },
+    after: { workflowState: workflow.currentState, decision },
+    actor: principal,
+  });
+  return workflow;
 }
 
 export async function delegateApproval(

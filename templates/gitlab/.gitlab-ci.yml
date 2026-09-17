@@ -1,0 +1,16 @@
+stages: [test]
+test:
+  stage: test
+  image: node:20
+  services:
+    - name: pgvector/pgvector:pg16
+      alias: postgres
+  variables:
+    POSTGRES_USER: setwin
+    POSTGRES_PASSWORD: setwin
+    POSTGRES_DB: setwin
+    SETWIN_DATABASE_URL: postgresql://setwin:setwin@postgres:5432/setwin
+  script:
+    - corepack enable
+    - pnpm install
+    - pnpm test

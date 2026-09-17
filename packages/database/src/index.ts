@@ -5,6 +5,8 @@ import net from "node:net";
 import postgres, { type Sql } from "postgres";
 import { setwinMeta } from "./schema.ts";
 import {
+  agentProposals,
+  aiActions,
   approvalDecisions,
   approvalPolicies,
   approvalRequests,
@@ -12,10 +14,19 @@ import {
   artifactRelationships,
   artifactVersions,
   artifacts,
+  auditEvents,
   authSessions,
+  changeAnalyses,
+  codeEdges,
+  codeRepositories,
+  codeSymbols,
+  codingAgentRuns,
+  contextChunks,
+  engineeringEvents,
   gherkinFeatures,
   gherkinScenarios,
   gherkinSteps,
+  integrationConnections,
   permissions,
   projects,
   reviewFindings,
@@ -24,6 +35,8 @@ import {
   roles,
   teamMembers,
   teams,
+  testResults,
+  testRuns,
   userRoles,
   users,
   workflowPolicies,
@@ -322,6 +335,177 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
         created_at timestamptz NOT NULL
       )
     `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id uuid PRIMARY KEY,
+        sequence integer NOT NULL UNIQUE,
+        correlation_id text NOT NULL,
+        action text NOT NULL,
+        actor_id uuid REFERENCES users(id),
+        actor_username text NOT NULL DEFAULT '',
+        actor_roles text NOT NULL DEFAULT '',
+        entity_type text NOT NULL,
+        entity_id text NOT NULL,
+        entity_key text NOT NULL DEFAULT '',
+        version integer,
+        before_json text,
+        after_json text,
+        metadata_json text NOT NULL DEFAULT '{}',
+        previous_hash text NOT NULL,
+        event_hash text NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS ai_actions (
+        id uuid PRIMARY KEY,
+        correlation_id text NOT NULL,
+        provider text NOT NULL,
+        model text NOT NULL,
+        task text NOT NULL,
+        prompt text NOT NULL,
+        response text NOT NULL DEFAULT '',
+        status text NOT NULL,
+        error text NOT NULL DEFAULT '',
+        actor_id uuid REFERENCES users(id),
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS code_repositories (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        path text NOT NULL,
+        remote_url text NOT NULL DEFAULT '',
+        default_branch text NOT NULL DEFAULT 'main',
+        last_indexed_at timestamptz,
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS code_symbols (
+        id uuid PRIMARY KEY,
+        repository_id uuid NOT NULL REFERENCES code_repositories(id),
+        file_path text NOT NULL,
+        language text NOT NULL,
+        kind text NOT NULL,
+        name text NOT NULL,
+        start_line integer NOT NULL,
+        end_line integer NOT NULL,
+        signature text NOT NULL DEFAULT ''
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS code_edges (
+        id uuid PRIMARY KEY,
+        repository_id uuid NOT NULL REFERENCES code_repositories(id),
+        from_symbol_id uuid NOT NULL REFERENCES code_symbols(id),
+        to_symbol_id uuid NOT NULL REFERENCES code_symbols(id),
+        edge_type text NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS change_analyses (
+        id uuid PRIMARY KEY,
+        repository_id uuid NOT NULL REFERENCES code_repositories(id),
+        base_ref text NOT NULL,
+        head_ref text NOT NULL,
+        diff_summary text NOT NULL,
+        impacted_symbols text NOT NULL DEFAULT '[]',
+        regression_scope text NOT NULL DEFAULT '[]',
+        risk_score double precision NOT NULL,
+        risk_level text NOT NULL,
+        created_by uuid REFERENCES users(id),
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS context_chunks (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        source_type text NOT NULL,
+        source_id text NOT NULL,
+        content text NOT NULL,
+        embedding_json text NOT NULL DEFAULT '[]',
+        metadata_json text NOT NULL DEFAULT '{}',
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS agent_proposals (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        role text NOT NULL,
+        title text NOT NULL,
+        content text NOT NULL,
+        artifact_type text NOT NULL,
+        artifact_key text,
+        status text NOT NULL DEFAULT 'DRAFT',
+        ai_action_id uuid REFERENCES ai_actions(id),
+        created_by uuid REFERENCES users(id),
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS coding_agent_runs (
+        id uuid PRIMARY KEY,
+        agent text NOT NULL,
+        prompt text NOT NULL,
+        workspace_path text NOT NULL DEFAULT '',
+        status text NOT NULL,
+        output text NOT NULL DEFAULT '',
+        error text NOT NULL DEFAULT '',
+        actor_id uuid REFERENCES users(id),
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_runs (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        adapter text NOT NULL,
+        suite text NOT NULL DEFAULT '',
+        status text NOT NULL,
+        summary_json text NOT NULL DEFAULT '{}',
+        started_at timestamptz NOT NULL,
+        finished_at timestamptz,
+        created_by uuid REFERENCES users(id)
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_results (
+        id uuid PRIMARY KEY,
+        run_id uuid NOT NULL REFERENCES test_runs(id),
+        name text NOT NULL,
+        status text NOT NULL,
+        duration_ms integer NOT NULL DEFAULT 0,
+        message text NOT NULL DEFAULT ''
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS engineering_events (
+        id uuid PRIMARY KEY,
+        project_id uuid REFERENCES projects(id),
+        category text NOT NULL,
+        name text NOT NULL,
+        value double precision,
+        payload_json text NOT NULL DEFAULT '{}',
+        occurred_at timestamptz NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS integration_connections (
+        id uuid PRIMARY KEY,
+        provider text NOT NULL UNIQUE,
+        base_url text NOT NULL DEFAULT '',
+        configured boolean NOT NULL DEFAULT false,
+        status text NOT NULL DEFAULT 'unconfigured',
+        last_checked_at timestamptz,
+        metadata_json text NOT NULL DEFAULT '{}',
+        created_at timestamptz NOT NULL
+      )
+    `;
   } finally {
     try {
       await client.sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_ID})`;
@@ -421,6 +605,8 @@ function safeError(error: unknown, databaseUrl: string): string {
 }
 
 export {
+  agentProposals,
+  aiActions,
   approvalDecisions,
   approvalPolicies,
   approvalRequests,
@@ -428,10 +614,19 @@ export {
   artifactRelationships,
   artifactVersions,
   artifacts,
+  auditEvents,
   authSessions,
+  changeAnalyses,
+  codeEdges,
+  codeRepositories,
+  codeSymbols,
+  codingAgentRuns,
+  contextChunks,
+  engineeringEvents,
   gherkinFeatures,
   gherkinScenarios,
   gherkinSteps,
+  integrationConnections,
   permissions,
   projects,
   reviewFindings,
@@ -441,6 +636,8 @@ export {
   setwinMeta,
   teamMembers,
   teams,
+  testResults,
+  testRuns,
   userRoles,
   users,
   workflowPolicies,

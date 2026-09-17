@@ -11,6 +11,8 @@
   "scripts": {
     "setwin": "tsx apps/cli/src/index.ts",
     "dev": "tsx apps/api/src/server.ts",
+    "web": "pnpm --filter @setwin/web dev",
+    "mcp": "tsx apps/mcp/src/index.ts",
     "test": "vitest run",
     "db:migrate": "tsx packages/database/src/migrate.ts"
   },

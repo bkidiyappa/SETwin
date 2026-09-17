@@ -72,6 +72,7 @@ export {
   addReviewFinding,
   delegateApproval,
   escalateApproval,
+  findExistingReview,
   findReview,
   getReview,
   listApprovalPolicies,

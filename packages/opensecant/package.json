@@ -1,0 +1,13 @@
+{
+  "name": "@setwin/opensecant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@setwin/audit": "workspace:*",
+    "@setwin/auth": "workspace:*",
+    "@setwin/testing": "workspace:*",
+    "@setwin/twin": "workspace:*"
+  }
+}

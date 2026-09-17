@@ -127,7 +127,19 @@ export async function transitionWorkflow(
     });
   });
   await openReviewForVersion(databaseUrl, artifact.key, principal, options?.dueAt);
-  return getWorkflow(databaseUrl, artifact.key, principal);
+  const workflow = await getWorkflow(databaseUrl, artifact.key, principal);
+  const { recordAuditEvent } = await import("@setwin/audit");
+  await recordAuditEvent(databaseUrl, {
+    action: "workflow.submit",
+    entityType: "artifact",
+    entityId: artifact.id,
+    entityKey: artifact.key,
+    version: current.version,
+    before: { workflowState: fromState },
+    after: { workflowState: toState },
+    actor: principal,
+  });
+  return workflow;
 }
 
 async function loadPolicy(

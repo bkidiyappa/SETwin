@@ -1,0 +1,18 @@
+{
+  "name": "@setwin/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "setwin-mcp": "./src/index.ts"
+  },
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@setwin/audit": "workspace:*",
+    "@setwin/auth": "workspace:*",
+    "@setwin/config": "workspace:*",
+    "@setwin/core": "workspace:*",
+    "@setwin/requirements": "workspace:*",
+    "@setwin/twin": "workspace:*"
+  }
+}

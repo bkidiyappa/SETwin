@@ -7,9 +7,21 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@setwin/agents": "workspace:*",
+    "@setwin/ai": "workspace:*",
+    "@setwin/audit": "workspace:*",
     "@setwin/auth": "workspace:*",
+    "@setwin/change": "workspace:*",
+    "@setwin/cicd": "workspace:*",
     "@setwin/config": "workspace:*",
+    "@setwin/context": "workspace:*",
     "@setwin/core": "workspace:*",
+    "@setwin/integrations": "workspace:*",
+    "@setwin/opensecant": "workspace:*",
+    "@setwin/openvector": "workspace:*",
+    "@setwin/repo": "workspace:*",
+    "@setwin/requirements": "workspace:*",
+    "@setwin/testing": "workspace:*",
     "@setwin/twin": "workspace:*",
     "fastify": "^5.6.0"
   }

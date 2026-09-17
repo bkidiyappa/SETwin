@@ -288,3 +288,181 @@ export const approvalDecisions = pgTable("approval_decisions", {
   comment: text("comment").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
+
+export const auditEvents = pgTable("audit_events", {
+  id: uuid("id").primaryKey(),
+  sequence: integer("sequence").notNull().unique(),
+  correlationId: text("correlation_id").notNull(),
+  action: text("action").notNull(),
+  actorId: uuid("actor_id").references(() => users.id),
+  actorUsername: text("actor_username").notNull().default(""),
+  actorRoles: text("actor_roles").notNull().default(""),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  entityKey: text("entity_key").notNull().default(""),
+  version: integer("version"),
+  beforeJson: text("before_json"),
+  afterJson: text("after_json"),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  previousHash: text("previous_hash").notNull(),
+  eventHash: text("event_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const aiActions = pgTable("ai_actions", {
+  id: uuid("id").primaryKey(),
+  correlationId: text("correlation_id").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  task: text("task").notNull(),
+  prompt: text("prompt").notNull(),
+  response: text("response").notNull().default(""),
+  status: text("status").notNull(),
+  error: text("error").notNull().default(""),
+  actorId: uuid("actor_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const codeRepositories = pgTable("code_repositories", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  path: text("path").notNull(),
+  remoteUrl: text("remote_url").notNull().default(""),
+  defaultBranch: text("default_branch").notNull().default("main"),
+  lastIndexedAt: timestamp("last_indexed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const codeSymbols = pgTable("code_symbols", {
+  id: uuid("id").primaryKey(),
+  repositoryId: uuid("repository_id")
+    .notNull()
+    .references(() => codeRepositories.id),
+  filePath: text("file_path").notNull(),
+  language: text("language").notNull(),
+  kind: text("kind").notNull(),
+  name: text("name").notNull(),
+  startLine: integer("start_line").notNull(),
+  endLine: integer("end_line").notNull(),
+  signature: text("signature").notNull().default(""),
+});
+
+export const codeEdges = pgTable("code_edges", {
+  id: uuid("id").primaryKey(),
+  repositoryId: uuid("repository_id")
+    .notNull()
+    .references(() => codeRepositories.id),
+  fromSymbolId: uuid("from_symbol_id")
+    .notNull()
+    .references(() => codeSymbols.id),
+  toSymbolId: uuid("to_symbol_id")
+    .notNull()
+    .references(() => codeSymbols.id),
+  edgeType: text("edge_type").notNull(),
+});
+
+export const changeAnalyses = pgTable("change_analyses", {
+  id: uuid("id").primaryKey(),
+  repositoryId: uuid("repository_id")
+    .notNull()
+    .references(() => codeRepositories.id),
+  baseRef: text("base_ref").notNull(),
+  headRef: text("head_ref").notNull(),
+  diffSummary: text("diff_summary").notNull(),
+  impactedSymbols: text("impacted_symbols").notNull().default("[]"),
+  regressionScope: text("regression_scope").notNull().default("[]"),
+  riskScore: doublePrecision("risk_score").notNull(),
+  riskLevel: text("risk_level").notNull(),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const contextChunks = pgTable("context_chunks", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  sourceType: text("source_type").notNull(),
+  sourceId: text("source_id").notNull(),
+  content: text("content").notNull(),
+  embeddingJson: text("embedding_json").notNull().default("[]"),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const agentProposals = pgTable("agent_proposals", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  role: text("role").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  artifactType: text("artifact_type").notNull(),
+  artifactKey: text("artifact_key"),
+  status: text("status").notNull().default("DRAFT"),
+  aiActionId: uuid("ai_action_id").references(() => aiActions.id),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const codingAgentRuns = pgTable("coding_agent_runs", {
+  id: uuid("id").primaryKey(),
+  agent: text("agent").notNull(),
+  prompt: text("prompt").notNull(),
+  workspacePath: text("workspace_path").notNull().default(""),
+  status: text("status").notNull(),
+  output: text("output").notNull().default(""),
+  error: text("error").notNull().default(""),
+  actorId: uuid("actor_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const testRuns = pgTable("test_runs", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  adapter: text("adapter").notNull(),
+  suite: text("suite").notNull().default(""),
+  status: text("status").notNull(),
+  summaryJson: text("summary_json").notNull().default("{}"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => users.id),
+});
+
+export const testResults = pgTable("test_results", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => testRuns.id),
+  name: text("name").notNull(),
+  status: text("status").notNull(),
+  durationMs: integer("duration_ms").notNull().default(0),
+  message: text("message").notNull().default(""),
+});
+
+export const engineeringEvents = pgTable("engineering_events", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id").references(() => projects.id),
+  category: text("category").notNull(),
+  name: text("name").notNull(),
+  value: doublePrecision("value"),
+  payloadJson: text("payload_json").notNull().default("{}"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const integrationConnections = pgTable("integration_connections", {
+  id: uuid("id").primaryKey(),
+  provider: text("provider").notNull().unique(),
+  baseUrl: text("base_url").notNull().default(""),
+  configured: boolean("configured").notNull().default(false),
+  status: text("status").notNull().default("unconfigured"),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  metadataJson: text("metadata_json").notNull().default("{}"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});

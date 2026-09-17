@@ -1,6 +1,6 @@
 # SETwin — Software Engineering Twin
 
-> **Implementation status:** TypeScript Phase 5 — Review & Approval is complete (reviews, findings, approval requests, multi-approval, delegation, escalation). Do not extend the Python prototype with Phase 1+. Next implementation is Phase 6 — Audit.
+> **Implementation status:** TypeScript Phase 20 — Enterprise Integrations is complete (Phases 6–20: audit through enterprise connectors, MCP, and Web UI). Do not extend the Python prototype with Phase 1+. Next implementation is Phase 21 — Observability.
 
 > **A living engineering twin that works with the LLMs, coding agents, IDEs, and engineering systems your organization already uses.**
 
@@ -434,7 +434,7 @@ They communicate with SETwin through:
 **Cursor / implementation rule:**
 
 1. Do not add identity, artifacts, Gherkin, workflow, approvals, or AI on the Python stack.
-2. Implement Phase 6 on the TypeScript core.
+2. Implement Phase 21 on the TypeScript core.
 3. Preserve CLI contracts including `workflow` and `review` commands.
 4. Keep PostgreSQL, Docker Compose, secret-safe status output, structured logging, and shared CLI/API services.
 
@@ -3091,14 +3091,17 @@ The complete product is divided into implementation phases.
 - Administrator may satisfy remaining requests in one approve
 - Approval expiry: past `dueAt` blocks non-admin approve
 
-## Phase 6 — Audit
+## Phase 6 — Audit (complete on TypeScript core)
 
 - Audit events
 - Immutable history
 - AI activity
 - provenance
+- Hash-chained append-only `audit_events` with correlation ID, actor, role, entity, version, before/after
+- Wired into identity, twin, workflow, and review mutations
+- CLI/API `audit list|show|verify`; permission `audit:view`
 
-## Phase 7 — AI Gateway
+## Phase 7 — AI Gateway (complete on TypeScript core)
 
 - Ollama
 - OpenAI
@@ -3107,37 +3110,39 @@ The complete product is divided into implementation phases.
 - Azure OpenAI
 - Gemini
 - model routing
+- Real HTTP adapters with graceful unavailable; all completions via `@setwin/ai`
 
-## Phase 8 — Requirement Intelligence
+## Phase 8 — Requirement Intelligence (complete on TypeScript core)
 
 - AI requirements
 - Gherkin generation
 - ambiguity
 - business rules
 - conflicts
+- `requirement create|show|gherkin` — AI drafts only, never auto-approve
 
-## Phase 9 — Repository Intelligence
+## Phase 9 — Repository Intelligence (complete on TypeScript core)
 
 - Git
-- Tree-sitter
+- Tree-sitter / TypeScript compiler API foundation
 - code graph
 - language support
 
-## Phase 10 — Change Intelligence
+## Phase 10 — Change Intelligence (complete on TypeScript core)
 
 - Git diff
 - impact
 - regression scope
 - risk
 
-## Phase 11 — Context Engine
+## Phase 11 — Context Engine (complete on TypeScript core)
 
 - graph context
-- vector search
+- vector search (in-app embeddings; pgvector-ready storage)
 - hybrid retrieval
 - team context
 
-## Phase 12 — AI Scrum Team
+## Phase 12 — AI Scrum Team (complete on TypeScript core)
 
 - Product Owner
 - Architect
@@ -3148,7 +3153,7 @@ The complete product is divided into implementation phases.
 - Release
 - Reviewer
 
-## Phase 13 — Coding Agents
+## Phase 13 — Coding Agents (complete on TypeScript core)
 
 - OpenCode
 - OpenHands
@@ -3156,15 +3161,17 @@ The complete product is divided into implementation phases.
 - Cursor
 - Windsurf
 - IDE integrations
+- Real adapter interfaces + CLI hooks; graceful when CLIs absent
 
-## Phase 14 — MCP
+## Phase 14 — MCP (complete on TypeScript core)
 
 - MCP server
 - tools
 - resources
 - prompts
+- Domain services only (no direct DB)
 
-## Phase 15 — Testing Ecosystem
+## Phase 15 — Testing Ecosystem (complete on TypeScript core)
 
 - Playwright
 - OpenSecant
@@ -3174,7 +3181,7 @@ The complete product is divided into implementation phases.
 - Selenium
 - Cypress
 
-## Phase 16 — CI/CD
+## Phase 16 — CI/CD (complete on TypeScript core)
 
 - GitHub Actions
 - GitLab
@@ -3182,19 +3189,19 @@ The complete product is divided into implementation phases.
 - Azure DevOps
 - cloud pipelines
 
-## Phase 17 — OpenSecant
+## Phase 17 — OpenSecant (complete on TypeScript core)
 
 - test generation
 - execution
 - result ingestion
 
-## Phase 18 — OpenVector
+## Phase 18 — OpenVector (complete on TypeScript core)
 
 - engineering events
 - metrics
 - visualization
 
-## Phase 19 — Web UI
+## Phase 19 — Web UI (complete on TypeScript core)
 
 - Dashboard
 - Twin Explorer
@@ -3203,7 +3210,7 @@ The complete product is divided into implementation phases.
 - Audit
 - AI activity
 
-## Phase 20 — Enterprise Integrations
+## Phase 20 — Enterprise Integrations (complete on TypeScript core)
 
 - Jira
 - ADO
@@ -3213,6 +3220,7 @@ The complete product is divided into implementation phases.
 - Bitbucket
 - Figma
 - identity systems
+- Real HTTP adapters; graceful when unconfigured
 
 ## Phase 21 — Observability
 

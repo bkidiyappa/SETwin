@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { Command, CommanderError } from "commander";
 import {
@@ -25,6 +25,7 @@ import {
   listTeams,
   listUsers,
   login,
+  requirePermission,
   type Principal,
 } from "@setwin/auth";
 import { readStoredToken, writeStoredSession } from "./session.ts";
@@ -52,6 +53,18 @@ import {
   recordReviewDecision,
   transitionWorkflow,
 } from "@setwin/twin";
+import { getAuditEvent, listAuditEvents, verifyAuditChain } from "@setwin/audit";
+import { completeViaGateway, listAiActions } from "@setwin/ai";
+import { createRequirement, generateGherkinDraft, showRequirement } from "@setwin/requirements";
+import { indexRepository, listRepositories, listSymbols, registerRepository } from "@setwin/repo";
+import { analyzeChange, getChangeAnalysis } from "@setwin/change";
+import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
+import { invokeCodingAgent, listProposals, proposeAsRole } from "@setwin/agents";
+import { ingestTestRun, listTestRuns, parseJunitLike } from "@setwin/testing";
+import { listPipelineAdapters, renderPipelineTemplate, type PipelineProvider } from "@setwin/cicd";
+import { executeGeneratedTests, generateTestsFromArtifact } from "@setwin/opensecant";
+import { listEngineeringEvents, recordEngineeringEvent, visualizationSeries } from "@setwin/openvector";
+import { listIntegrations, syncIntegrationStatus } from "@setwin/integrations";
 
 export type CliIo = {
   log: (message: string) => void;
@@ -667,7 +680,392 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
       }
     });
 
+  const audit = program.command("audit").description("Immutable audit history.");
+  audit
+    .command("list")
+    .option("--entity <key>", "Filter by entity key.")
+    .option("--action <action>", "Filter by action.")
+    .option("--limit <n>", "Max rows.", "50")
+    .description("List recent audit events.")
+    .action(async (options: { entity?: string; action?: string; limit?: string }) => {
+      const actor = await requireActor(program);
+      await requirePermission(getSettings().databaseUrl, actor, "audit:view");
+      const rows = await listAuditEvents(getSettings().databaseUrl, {
+        entityKey: options.entity,
+        action: options.action,
+        limit: Number(options.limit ?? 50),
+      });
+      for (const row of rows) {
+        io.log(`${row.sequence}\t${row.action}\t${row.entityKey}\t${row.actorUsername}\t${row.eventHash.slice(0, 12)}`);
+      }
+    });
+  audit
+    .command("show")
+    .argument("<idOrSequence>")
+    .description("Show one audit event.")
+    .action(async (idOrSequence: string) => {
+      const actor = await requireActor(program);
+      await requirePermission(getSettings().databaseUrl, actor, "audit:view");
+      const row = await getAuditEvent(getSettings().databaseUrl, idOrSequence);
+      if (!row) {
+        throw new NotFoundError(`Audit event not found: ${idOrSequence}`);
+      }
+      io.log(JSON.stringify(row, null, 2));
+    });
+  audit
+    .command("verify")
+    .description("Verify the audit hash chain.")
+    .action(async () => {
+      const result = await verifyAuditChain(getSettings().databaseUrl);
+      io.log(result.ok ? `ok (${result.checked} events)` : `broken at ${result.brokenAt}: ${result.detail}`);
+    });
+
+  const requirement = program.command("requirement").description("Requirement intelligence.");
+  requirement
+    .command("create")
+    .argument("<text>")
+    .requiredOption("--project <key>", "Project key.")
+    .option("--title <title>", "Optional title.")
+    .description("Create a requirement DRAFT with ambiguity checks.")
+    .action(async (text: string, options: { project: string; title?: string }) => {
+      const actor = await requireActor(program);
+      const row = await createRequirement(getSettings().databaseUrl, { project: options.project, text, title: options.title }, actor);
+      io.log(`${row.key} v${row.currentVersion.version} DRAFT`);
+      io.log(`Ambiguities: ${row.checks.ambiguities.length}`);
+      io.log(`Business rules: ${row.checks.businessRules.length}`);
+      io.log(`Conflicts: ${row.checks.conflicts.length}`);
+    });
+  requirement
+    .command("show")
+    .argument("<key>")
+    .description("Show a requirement and checks.")
+    .action(async (key: string) => {
+      const actor = await requireActor(program);
+      const row = await showRequirement(getSettings().databaseUrl, key, actor);
+      io.log(`${row.key} ${row.currentVersion.title}`);
+      io.log(row.currentVersion.content);
+      io.log(`Ambiguities: ${row.checks.ambiguities.join("; ") || "(none)"}`);
+      io.log(`Conflicts: ${row.checks.conflicts.join("; ") || "(none)"}`);
+    });
+  requirement
+    .command("gherkin")
+    .argument("<key>")
+    .description("Generate DRAFT Gherkin via the AI gateway (never auto-approves).")
+    .action(async (key: string) => {
+      const actor = await requireActor(program);
+      const row = await generateGherkinDraft(getSettings().databaseUrl, key, actor);
+      io.log(`${row.gherkin.key} DRAFT (ai=${row.aiStatus})`);
+    });
+
+  const ai = program.command("ai").description("AI gateway.");
+  ai
+    .command("complete")
+    .requiredOption("--task <task>", "Task name for routing.")
+    .requiredOption("--prompt <text>", "Prompt text.")
+    .option("--system <text>", "Optional system prompt.")
+    .description("Complete a prompt through the AI gateway.")
+    .action(async (options: { task: string; prompt: string; system?: string }) => {
+      const actor = await requireActor(program);
+      const result = await completeViaGateway(getSettings().databaseUrl, options, actor);
+      io.log(`${result.provider}/${result.model} ${result.status}`);
+      io.log(result.text || result.error || "(empty)");
+    });
+  ai
+    .command("actions")
+    .description("List recent AI actions.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      const rows = await listAiActions(getSettings().databaseUrl, actor);
+      for (const row of rows) {
+        io.log(`${row.provider}\t${row.model}\t${row.task}\t${row.status}`);
+      }
+    });
+
+  const repo = program.command("repo").description("Repository intelligence.");
+  repo
+    .command("register")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--path <path>", "Local git repository path.")
+    .description("Register a git repository.")
+    .action(async (options: { project: string; path: string }) => {
+      const actor = await requireActor(program);
+      const row = await registerRepository(getSettings().databaseUrl, options, actor);
+      io.log(`${row.id} ${row.path} (${row.defaultBranch})`);
+    });
+  repo
+    .command("index")
+    .argument("<repositoryId>")
+    .description("Index code symbols and edges.")
+    .action(async (repositoryId: string) => {
+      const actor = await requireActor(program);
+      const row = await indexRepository(getSettings().databaseUrl, repositoryId, actor);
+      io.log(`symbols=${row.symbols} edges=${row.edges}`);
+    });
+  repo
+    .command("list")
+    .description("List registered repositories.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await listRepositories(getSettings().databaseUrl, actor)) {
+        io.log(`${row.id}\t${row.path}\t${row.defaultBranch}`);
+      }
+    });
+  repo
+    .command("symbols")
+    .argument("<repositoryId>")
+    .description("List indexed symbols.")
+    .action(async (repositoryId: string) => {
+      const actor = await requireActor(program);
+      for (const row of await listSymbols(getSettings().databaseUrl, repositoryId, actor)) {
+        io.log(`${row.kind}\t${row.name}\t${row.filePath}`);
+      }
+    });
+
+  const change = program.command("change").description("Change intelligence.");
+  change
+    .command("analyze")
+    .requiredOption("--repository <id>", "Repository id.")
+    .requiredOption("--base <ref>", "Base git ref.")
+    .requiredOption("--head <ref>", "Head git ref.")
+    .description("Analyze diff impact and risk.")
+    .action(async (options: { repository: string; base: string; head: string }) => {
+      const actor = await requireActor(program);
+      const row = await analyzeChange(
+        getSettings().databaseUrl,
+        { repositoryId: options.repository, baseRef: options.base, headRef: options.head },
+        actor,
+      );
+      io.log(`${row.id} risk=${row.riskLevel} (${row.riskScore})`);
+      io.log(row.diffSummary);
+    });
+  change
+    .command("show")
+    .argument("<id>")
+    .description("Show a change analysis.")
+    .action(async (id: string) => {
+      const actor = await requireActor(program);
+      io.log(JSON.stringify(await getChangeAnalysis(getSettings().databaseUrl, id, actor), null, 2));
+    });
+
+  const context = program.command("context").description("Context engine.");
+  context
+    .command("index")
+    .requiredOption("--project <key>", "Project key.")
+    .description("Index project artifacts for hybrid retrieval.")
+    .action(async (options: { project: string }) => {
+      const actor = await requireActor(program);
+      const row = await indexProjectContext(getSettings().databaseUrl, options.project, actor);
+      io.log(`chunks=${row.chunks}`);
+    });
+  context
+    .command("retrieve")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--query <text>", "Query text.")
+    .description("Retrieve graph + vector context.")
+    .action(async (options: { project: string; query: string }) => {
+      const actor = await requireActor(program);
+      const row = await retrieveContext(getSettings().databaseUrl, options, actor);
+      io.log(JSON.stringify(row, null, 2));
+    });
+  context
+    .command("graph")
+    .argument("<key>")
+    .description("Show relationship neighborhood.")
+    .action(async (key: string) => {
+      const actor = await requireActor(program);
+      for (const row of await getGraphNeighborhood(getSettings().databaseUrl, key, actor)) {
+        io.log(`${row.from} -[${row.type}]-> ${row.to}`);
+      }
+    });
+
+  const agent = program.command("agent").description("AI scrum team and coding agents.");
+  agent
+    .command("propose")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--role <role>", "Scrum role.")
+    .requiredOption("--topic <text>", "Topic.")
+    .description("Propose a DRAFT artifact as a role agent.")
+    .action(async (options: { project: string; role: string; topic: string }) => {
+      const actor = await requireActor(program);
+      const row = await proposeAsRole(getSettings().databaseUrl, options, actor);
+      io.log(`${row.id} ${row.role} ${row.status} ${row.artifactKey ?? "-"}`);
+    });
+  agent
+    .command("proposals")
+    .description("List agent proposals.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await listProposals(getSettings().databaseUrl, actor)) {
+        io.log(`${row.id}\t${row.role}\t${row.status}\t${row.title}`);
+      }
+    });
+  agent
+    .command("coding")
+    .requiredOption("--agent <name>", "opencode|openhands|claude-code|cursor|windsurf")
+    .requiredOption("--prompt <text>", "Prompt.")
+    .option("--workspace <path>", "Workspace path.")
+    .description("Invoke a coding agent adapter.")
+    .action(async (options: { agent: string; prompt: string; workspace?: string }) => {
+      const actor = await requireActor(program);
+      const row = await invokeCodingAgent(
+        getSettings().databaseUrl,
+        { agent: options.agent, prompt: options.prompt, workspacePath: options.workspace },
+        actor,
+      );
+      io.log(`${row.agent} ${row.status}`);
+      if (row.error) {
+        io.log(row.error);
+      } else {
+        io.log(row.output || "(no output)");
+      }
+    });
+
+  const testCmd = program.command("test").description("Testing ecosystem.");
+  testCmd
+    .command("ingest")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--adapter <name>", "playwright|api|unit|integration|selenium|cypress")
+    .option("--suite <name>", "Suite name.")
+    .option("--junit <file>", "JUnit-like XML file.")
+    .description("Ingest test results.")
+    .action(async (options: { project: string; adapter: string; suite?: string; junit?: string }) => {
+      const actor = await requireActor(program);
+      const results = options.junit ? parseJunitLike(await readFile(options.junit, "utf8")) : [];
+      const row = await ingestTestRun(
+        getSettings().databaseUrl,
+        { project: options.project, adapter: options.adapter, suite: options.suite, results },
+        actor,
+      );
+      io.log(`${row.id} ${row.status} passed=${row.passed} failed=${row.failed}`);
+    });
+  testCmd
+    .command("runs")
+    .description("List ingested test runs.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await listTestRuns(getSettings().databaseUrl, actor)) {
+        io.log(`${row.id}\t${row.adapter}\t${row.status}`);
+      }
+    });
+
+  const cicd = program.command("cicd").description("CI/CD templates and adapters.");
+  cicd
+    .command("adapters")
+    .description("List CI/CD adapters.")
+    .action(async () => {
+      for (const row of listPipelineAdapters()) {
+        io.log(`${row.provider}\t${row.configured ? "configured" : "unconfigured"}`);
+      }
+    });
+  cicd
+    .command("template")
+    .argument("<provider>")
+    .option("--out <file>", "Write template to file.")
+    .description("Print a pipeline template.")
+    .action(async (provider: string, options: { out?: string }) => {
+      const template = renderPipelineTemplate(provider as PipelineProvider);
+      if (options.out) {
+        await writeFile(options.out, template, "utf8");
+        io.log(`Wrote ${options.out}`);
+      } else {
+        io.log(template);
+      }
+    });
+
+  const opensecant = program.command("opensecant").description("OpenSecant test generation and execution.");
+  opensecant
+    .command("generate")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--key <artifact>", "Source artifact key.")
+    .description("Generate DRAFT tests from an artifact.")
+    .action(async (options: { project: string; key: string }) => {
+      const actor = await requireActor(program);
+      const row = await generateTestsFromArtifact(getSettings().databaseUrl, options, actor);
+      io.log(`${row.testKey}`);
+      for (const scenario of row.scenarios) {
+        io.log(`- ${scenario}`);
+      }
+    });
+  opensecant
+    .command("execute")
+    .requiredOption("--project <key>", "Project key.")
+    .option("--scenario <text>", "Scenario name.", collect, [])
+    .description("Execute generated OpenSecant scenarios locally.")
+    .action(async (options: { project: string; scenario: string[] }) => {
+      const actor = await requireActor(program);
+      const row = await executeGeneratedTests(
+        getSettings().databaseUrl,
+        { project: options.project, scenarios: options.scenario.length ? options.scenario : ["default"] },
+        actor,
+      );
+      io.log(`${row.runId} ${row.status}`);
+    });
+
+  const metrics = program.command("metrics").description("OpenVector engineering metrics.");
+  metrics
+    .command("record")
+    .requiredOption("--category <name>", "Category.")
+    .requiredOption("--name <name>", "Metric name.")
+    .option("--value <n>", "Numeric value.")
+    .option("--project <key>", "Project key.")
+    .description("Record an engineering event.")
+    .action(async (options: { category: string; name: string; value?: string; project?: string }) => {
+      const actor = await requireActor(program);
+      const row = await recordEngineeringEvent(
+        getSettings().databaseUrl,
+        {
+          category: options.category,
+          name: options.name,
+          value: options.value === undefined ? undefined : Number(options.value),
+          project: options.project,
+        },
+        actor,
+      );
+      io.log(row.id);
+    });
+  metrics
+    .command("list")
+    .description("List engineering events.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await listEngineeringEvents(getSettings().databaseUrl, actor)) {
+        io.log(`${row.category}\t${row.name}\t${row.value ?? "-"}\t${row.occurredAt.toISOString()}`);
+      }
+    });
+  metrics
+    .command("series")
+    .description("Visualization series.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      io.log(JSON.stringify(await visualizationSeries(getSettings().databaseUrl, actor), null, 2));
+    });
+
+  const integrations = program.command("integration").description("Enterprise integrations.");
+  integrations
+    .command("list")
+    .description("List integration connectors.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await listIntegrations(getSettings().databaseUrl, actor)) {
+        io.log(`${row.provider}\t${row.status}\t${row.baseUrl || "-"}`);
+      }
+    });
+  integrations
+    .command("sync")
+    .description("Probe and sync integration status.")
+    .action(async () => {
+      const actor = await requireActor(program);
+      for (const row of await syncIntegrationStatus(getSettings().databaseUrl, actor)) {
+        io.log(`${row.provider}\t${row.status}`);
+      }
+    });
+
   return program;
+}
+
+function collect(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
 }
 
 function printReview(io: CliIo, row: Awaited<ReturnType<typeof getReview>>): void {

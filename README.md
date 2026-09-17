@@ -12,19 +12,16 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 
 ## Current status
 
-**TypeScript Phase 5 — Review & Approval is implemented.** Python 3.12+ remains only as a prototype and for later ML/analytics. Do not add Phase 6+ on the Python stack.
+**TypeScript Phase 20 — Enterprise Integrations is implemented.** Phases 6–20 cover audit, AI gateway, requirements, repository/change/context intelligence, AI scrum + coding agents, MCP, testing, CI/CD, OpenSecant, OpenVector, Web UI, and enterprise connectors. Python remains prototype-only; do not add Phase 21+ on the Python stack.
 
-- CLI: `status`, `init`, `serve`, `login`, `whoami`, `user`, `role`, `team`, `project`, `artifact`, `relate`, `gherkin`, `workflow`, `review`
-- Configuration from `SETWIN_*` environment variables
-- Pino structured logging with correlation IDs
-- Fastify health, status, identity, twin, Gherkin, workflow, and review
-- PostgreSQL via Docker Compose
-- Workflow states on artifact versions plus `workflow_policies` and `workflow_transitions`
-- Reviews, findings, `approval_policies`, `approval_requests`, and `approval_decisions`
-- Immutable versions; Gherkin validation; gated `submit` / `approve` / `reject` / `request_changes`
-- Multi-approval, sequential approval, delegation, escalation, and author separation of duties
-- scrypt passwords, SHA-256 session tokens (`stw_…`), backend permission checks
-- Vitest
+- CLI: `status`, `init`, `serve`, identity, twin, gherkin, workflow, review, `audit`, `requirement`, `ai`, `repo`, `change`, `context`, `agent`, `test`, `cicd`, `opensecant`, `metrics`, `integration`
+- Fastify API routes for the same domain services
+- MCP stdio server (`pnpm mcp`) sharing domain services
+- Web UI (`pnpm web`) — Dashboard, Twin Explorer, Reviews, Approvals, Audit, AI activity
+- Hash-chained audit events on mutations
+- AI gateway (Ollama-first; OpenAI/Anthropic/Bedrock/Azure/Gemini adapters)
+- GitHub Actions workflow plus GitLab/Jenkins/ADO templates
+- PostgreSQL via Docker Compose (`pgvector/pgvector:pg16`)
 
 ## Requirements
 
@@ -45,20 +42,16 @@ pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass
 pnpm setwin -- whoami
 pnpm setwin -- project create demo --name "Demo"
-pnpm setwin -- artifact create --project demo --type REQUIREMENT --title "Cancel an order" --content "Customers can cancel an order within 30 minutes."
-pnpm setwin -- artifact version REQ-001 --content "Customers can cancel an unpaid order within 30 minutes."
-pnpm setwin -- gherkin create --project demo --file order-cancel.feature --requirement REQ-001
-pnpm setwin -- gherkin show GHK-001
-pnpm setwin -- workflow submit REQ-001
-pnpm setwin -- review show REQ-001
-pnpm setwin -- review finding REQ-001 --severity INFO --summary "Acceptance criteria look complete."
-pnpm setwin -- review approve REQ-001
+pnpm setwin -- requirement create "Customers can cancel an unpaid order within 30 minutes." --project demo
+pnpm setwin -- requirement gherkin REQ-001
+pnpm setwin -- audit list
 pnpm dev
+pnpm web
 ```
 
-If PostgreSQL is not running, `status` still works and reports the database as unreachable without printing secrets. `init` creates local `data/` and `workspace/` directories, applies migrations when the database is reachable, and seeds default roles, permissions, workflow policies, and approval policies. The first user created becomes `administrator`. Later user creation requires `admin:manage_users` and a session from `setwin login` or `SETWIN_TOKEN`. Artifact v1 is `DRAFT`; a new version leaves the previous DRAFT as `SUPERSEDED` and does not rewrite it in place. Gherkin is parsed with `@cucumber/gherkin` before it is stored. Workflow requires `submit` before `approve`; `IN_REVIEW` versions cannot be replaced in place. Submit opens a review and required approval requests; all required decisions must complete before the version becomes `APPROVED`.
+If PostgreSQL is not running, `status` still works and reports the database as unreachable without printing secrets. Artifact versions remain immutable; AI Gherkin is always DRAFT and never auto-approved.
 
-No cloud account is required for core local development.
+No cloud account is required for core local development. Optional AI and integration providers are configured via `SETWIN_*` env vars and degrade gracefully when unset.
 
 ## Configuration
 

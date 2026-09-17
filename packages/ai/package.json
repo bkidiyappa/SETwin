@@ -1,0 +1,13 @@
+{
+  "name": "@setwin/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@setwin/auth": "workspace:*",
+    "@setwin/config": "workspace:*",
+    "@setwin/database": "workspace:*",
+    "drizzle-orm": "^0.44.5"
+  }
+}

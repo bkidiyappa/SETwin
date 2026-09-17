@@ -1,68 +1,49 @@
 # Architecture
 
-SETwin is a **modular monolith**. CLI, API, and later MCP share application services. MCP must not talk to the database directly.
+SETwin is a **modular monolith**. CLI, API, MCP, and Web UI share application services. MCP must not talk to the database directly.
 
 ```text
-CLI  ----+
-API  ----+----> @setwin/auth / @setwin/twin / @setwin/core ----> PostgreSQL
-MCP  ----+
+CLI / API / MCP / Web ----> domain packages ----> PostgreSQL (+ pgvector-ready)
 ```
 
-## Phase 0–5 (TypeScript)
+## Phase 0–20 (TypeScript)
 
 | Area | Implementation |
 |---|---|
 | Workspace | pnpm (`apps/*`, `packages/*`) |
 | Configuration | `@setwin/config` with Zod and `SETWIN_*` env vars |
 | Logging | Pino JSON on stderr, `correlation_id` via AsyncLocalStorage |
-| Status / init | `@setwin/core`; init seeds identity catalog, workflow policies, and approval policies |
-| Identity | `@setwin/auth` (users, roles, permissions, teams, sessions) |
-| Twin core | `@setwin/twin` (projects, artifacts, versions, relationships, Gherkin, workflow, reviews) |
-| Gherkin | `@cucumber/gherkin` parse/validate; Feature/Scenario/Step rows per version |
-| Workflow | Lifecycle graph, gates, and type policies in `@setwin/twin` |
-| Review | Reviews, findings, approval requests/decisions, multi-approval, delegation, escalation |
-| HTTP | Fastify in `@setwin/api` including `/artifacts/:key/workflow` and `/artifacts/:key/review` |
-| CLI | Commander including `workflow` and `review show|finding|approve|reject|request-changes|delegate|escalate|policies` |
-| Database | Drizzle ORM + `postgres` against PostgreSQL 16 |
-| Local process | `docker-compose.yml` (Postgres only) |
-
-Audit history and AI belong to later phases.
+| Status / init | `@setwin/core`; seeds identity, workflow, approval policies |
+| Identity | `@setwin/auth` |
+| Twin / Gherkin / Workflow / Review | `@setwin/twin` |
+| Audit | `@setwin/audit` append-only hash-chained events |
+| AI gateway | `@setwin/ai` Ollama-first + OpenAI/Anthropic/Bedrock/Azure/Gemini |
+| Requirements | `@setwin/requirements` create/show + AI Gherkin drafts |
+| Repo / Change / Context | `@setwin/repo`, `@setwin/change`, `@setwin/context` |
+| Agents | `@setwin/agents` scrum roles + coding agent adapters |
+| Testing / OpenSecant | `@setwin/testing`, `@setwin/opensecant` |
+| CI/CD | `@setwin/cicd` + `.github/workflows` + templates |
+| OpenVector | `@setwin/openvector` events/metrics/series |
+| Integrations | `@setwin/integrations` Jira/ADO/Confluence/GitHub/GitLab/Bitbucket/Figma/OIDC/SAML |
+| MCP | `apps/mcp` JSON-RPC stdio tools/resources/prompts |
+| Web UI | `apps/web` Vite/React Dashboard, Twin Explorer, Reviews, Approvals, Audit, AI activity |
+| HTTP | Fastify in `apps/api` |
+| CLI | Commander in `apps/cli` |
+| Database | Drizzle + `postgres`; Docker Compose uses `pgvector/pgvector:pg16` |
 
 ## Layout
 
 ```text
 apps/cli          setwin CLI
 apps/api          Fastify HTTP API
-packages/config   settings, logging, URL redaction
-packages/database Drizzle schema, health, migrations
-packages/auth     identity, passwords, sessions, permission checks
-packages/twin     projects, artifacts, Gherkin, workflow, reviews
-packages/core     status and init services
+apps/mcp          MCP server (domain services only)
+apps/web          Vite/React UI
+packages/*        shared domain services
+templates/*       GitLab/Jenkins/ADO pipeline templates
 ```
 
-A Python Phase 0 prototype remains under `setwin/` from an earlier plan revision. Do not extend it.
-
-## Data layer
-
-- PostgreSQL for transactional state
-- Identity, twin, Gherkin, workflow, review, and approval tables
-- Version lineage (`DRAFT` / `SUPERSEDED` / `APPROVED`) is separate from workflow state
-- Lifecycle: `DRAFT` → `IN_REVIEW` → `APPROVED` | `REJECTED` | `CHANGES_REQUESTED`
-- Approve from `DRAFT` is rejected. New versions are blocked while `IN_REVIEW`.
-- Submit creates a Review plus ApprovalRequest rows from `approval_policies`
-- CODE is parallel (`engineering_manager` + `security_reviewer`); ARCHITECTURE is sequential (`architect` then `engineering_manager`)
-- The artifact author cannot approve unless administrator; unresolved HIGH findings block approval
-- Administrator may satisfy remaining approval requests in one action
-
-## Security
-
-- Secrets stay in environment variables, never in Git
-- Status output redacts database passwords
-- Passwords hashed with scrypt; session tokens are `stw_…` values stored as SHA-256 hashes
-- CLI session stored in `data/session.json` or `SETWIN_TOKEN`
-- Workflow transitions check current state, permission, approval policy, and the open approval request
-- Gherkin validation is syntactic only; step text is never executed
+A Python Phase 0 prototype remains under `setwin/`. Do not extend it with Phase 1+.
 
 ## Next phase
 
-Phase 6 — Audit: audit events, immutable history, AI activity, provenance.
+Phase 21 — Observability (OpenTelemetry, Datadog, Prometheus, Grafana, CloudWatch, Application Insights).

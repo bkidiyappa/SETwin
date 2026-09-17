@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, or } from "drizzle-orm";
+import { recordAuditEvent } from "@setwin/audit";
 import {
   ConflictError,
   NotFoundError,
@@ -96,12 +97,12 @@ export async function createProject(
   const principal = await requirePermission(databaseUrl, actor, "project:create");
   const key = projectKey(input.key);
   const name = input.name?.trim() || key;
-  return withDatabase(databaseUrl, async ({ db }) => {
+  const row = await withDatabase(databaseUrl, async ({ db }) => {
     const existing = (await db.select().from(projects).where(eq(projects.key, key)))[0];
     if (existing) {
       throw new ConflictError(`Project already exists: ${key}`);
     }
-    const row = {
+    const created = {
       id: randomUUID(),
       key,
       name,
@@ -109,9 +110,18 @@ export async function createProject(
       createdBy: principal.id,
       createdAt: new Date(),
     };
-    await db.insert(projects).values(row);
-    return row;
+    await db.insert(projects).values(created);
+    return created;
   });
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.project.create",
+    entityType: "project",
+    entityId: row.id,
+    entityKey: row.key,
+    after: { key: row.key, name: row.name },
+    actor: principal,
+  });
+  return row;
 }
 
 export async function listProjects(databaseUrl: string, actor?: Principal): Promise<ProjectRecord[]> {
@@ -155,7 +165,7 @@ export async function createArtifact(
   const provenanceAuthority = parseProvenanceAuthority(input.provenanceAuthority);
   const content = input.content ?? "";
   const parsed = type === "GHERKIN" ? parseGherkin(content) : undefined;
-  return withDatabase(databaseUrl, async (client) => {
+  const created = await withDatabase(databaseUrl, async (client) => {
     const project = (await client.db.select().from(projects).where(eq(projects.key, projectKey(input.project))))[0];
     if (!project) {
       throw new NotFoundError(`Project not found: ${input.project}`);
@@ -192,6 +202,20 @@ export async function createArtifact(
     }
     return loadArtifact(client, key);
   });
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.artifact.create",
+    entityType: "artifact",
+    entityId: created.id,
+    entityKey: created.key,
+    version: created.currentVersion.version,
+    after: {
+      type: created.type,
+      title: created.currentVersion.title,
+      status: created.currentVersion.status,
+    },
+    actor: principal,
+  });
+  return created;
 }
 
 export async function listArtifacts(
@@ -308,7 +332,8 @@ export async function createArtifactVersion(
   const artifactKey = key.trim().toUpperCase();
   const provenanceSource = parseProvenanceSource(input.provenanceSource);
   const provenanceAuthority = parseProvenanceAuthority(input.provenanceAuthority);
-  return withDatabase(databaseUrl, async (client) => {
+  const before = await getArtifact(databaseUrl, artifactKey, principal);
+  const created = await withDatabase(databaseUrl, async (client) => {
     const artifact = (await client.db.select().from(artifacts).where(eq(artifacts.key, artifactKey)))[0];
     if (!artifact) {
       throw new NotFoundError(`Artifact not found: ${key}`);
@@ -362,6 +387,25 @@ export async function createArtifactVersion(
     }
     return loadArtifact(client, artifactKey);
   });
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.artifact.version",
+    entityType: "artifact",
+    entityId: created.id,
+    entityKey: created.key,
+    version: created.currentVersion.version,
+    before: {
+      version: before.currentVersion.version,
+      title: before.currentVersion.title,
+      content: before.currentVersion.content,
+    },
+    after: {
+      version: created.currentVersion.version,
+      title: created.currentVersion.title,
+      content: created.currentVersion.content,
+    },
+    actor: principal,
+  });
+  return created;
 }
 
 export async function createRelationship(

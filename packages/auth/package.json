@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@setwin/audit": "workspace:*",
     "@setwin/config": "workspace:*",
     "@setwin/database": "workspace:*",
     "drizzle-orm": "^0.44.5"

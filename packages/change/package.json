@@ -1,0 +1,14 @@
+{
+  "name": "@setwin/change",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@setwin/audit": "workspace:*",
+    "@setwin/auth": "workspace:*",
+    "@setwin/database": "workspace:*",
+    "@setwin/repo": "workspace:*",
+    "drizzle-orm": "^0.44.5"
+  }
+}

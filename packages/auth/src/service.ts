@@ -91,7 +91,7 @@ export async function createUser(
     throw new ConflictError("Username and password are required");
   }
 
-  return withDatabase(databaseUrl, async (client) => {
+  const created = await withDatabase(databaseUrl, async (client) => {
     const existingUsers = await client.db.select({ id: users.id }).from(users);
     if (existingUsers.length === 0) {
       return insertUser(client, input, username, input.role ?? "administrator");
@@ -99,6 +99,15 @@ export async function createUser(
     await assertPermission(client, actor, "admin:manage_users");
     return insertUser(client, input, username, input.role);
   });
+  await auditMutation(databaseUrl, {
+    action: "identity.user.create",
+    entityType: "user",
+    entityId: created.id,
+    entityKey: created.username,
+    after: { username: created.username, roles: created.roles },
+    actor,
+  });
+  return created;
 }
 
 export async function listUsers(databaseUrl: string, actor?: Principal): Promise<PublicUser[]> {
@@ -136,7 +145,7 @@ export async function assignRole(
   roleName: string,
   actor?: Principal,
 ): Promise<PublicUser> {
-  return withDatabase(databaseUrl, async (client) => {
+  const updated = await withDatabase(databaseUrl, async (client) => {
     await assertPermission(client, actor, "admin:manage_roles");
     const user = (
       await client.db.select().from(users).where(eq(users.username, username.trim().toLowerCase()))
@@ -157,6 +166,15 @@ export async function assignRole(
     }
     return toPublicUser(client, user);
   });
+  await auditMutation(databaseUrl, {
+    action: "identity.role.assign",
+    entityType: "user",
+    entityId: updated.id,
+    entityKey: updated.username,
+    after: { roles: updated.roles, assigned: roleName },
+    actor,
+  });
+  return updated;
 }
 
 export async function listRoles(databaseUrl: string): Promise<Array<{ name: string; description: string }>> {
@@ -171,22 +189,31 @@ export async function createTeam(
   input: { name: string; description?: string },
   actor?: Principal,
 ): Promise<{ id: string; name: string; description: string }> {
-  return withDatabase(databaseUrl, async (client) => {
+  const team = await withDatabase(databaseUrl, async (client) => {
     await assertPermission(client, actor, "team:manage");
     const name = input.name.trim();
     const existing = (await client.db.select().from(teams).where(eq(teams.name, name)))[0];
     if (existing) {
       throw new ConflictError(`Team already exists: ${name}`);
     }
-    const team = {
+    const created = {
       id: randomUUID(),
       name,
       description: input.description ?? "",
       createdAt: new Date(),
     };
-    await client.db.insert(teams).values(team);
-    return { id: team.id, name: team.name, description: team.description };
+    await client.db.insert(teams).values(created);
+    return { id: created.id, name: created.name, description: created.description };
   });
+  await auditMutation(databaseUrl, {
+    action: "identity.team.create",
+    entityType: "team",
+    entityId: team.id,
+    entityKey: team.name,
+    after: team,
+    actor,
+  });
+  return team;
 }
 
 export async function addTeamMember(
@@ -399,4 +426,30 @@ async function toPublicUser(client: DbClient, user: typeof users.$inferSelect): 
     disabled: user.disabled,
     roles: principal.roles,
   };
+}
+
+async function auditMutation(
+  databaseUrl: string,
+  input: {
+    action: string;
+    entityType: string;
+    entityId: string;
+    entityKey?: string;
+    before?: unknown;
+    after?: unknown;
+    actor?: Principal;
+  },
+): Promise<void> {
+  const { recordAuditEvent } = await import("@setwin/audit");
+  await recordAuditEvent(databaseUrl, {
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    entityKey: input.entityKey,
+    before: input.before,
+    after: input.after,
+    actor: input.actor
+      ? { id: input.actor.id, username: input.actor.username, roles: input.actor.roles }
+      : undefined,
+  });
 }

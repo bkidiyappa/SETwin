@@ -20,6 +20,7 @@ import { registerTwinRoutes } from "./twin.ts";
 import { registerGherkinRoutes } from "./gherkin.ts";
 import { registerWorkflowRoutes } from "./workflow.ts";
 import { registerReviewRoutes } from "./review.ts";
+import { registerPhaseRoutes } from "./phases.ts";
 
 export function createApp() {
   const settings = getSettings();
@@ -30,7 +31,12 @@ export function createApp() {
     const correlationId = (request.headers["x-correlation-id"] as string | undefined) ?? randomUUID();
     setCorrelationId(correlationId);
     reply.header("x-correlation-id", correlationId);
+    reply.header("access-control-allow-origin", "*");
+    reply.header("access-control-allow-headers", "authorization, content-type, x-correlation-id");
+    reply.header("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   });
+
+  app.options("/*", async (_request, reply) => reply.code(204).send());
 
   app.setErrorHandler((error, _request, reply) => {
     if (
@@ -62,6 +68,7 @@ export function createApp() {
   registerGherkinRoutes(app);
   registerWorkflowRoutes(app);
   registerReviewRoutes(app);
+  registerPhaseRoutes(app);
 
   return app;
 }

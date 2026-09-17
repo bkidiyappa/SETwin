@@ -1,0 +1,16 @@
+{
+  "name": "@setwin/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@setwin/auth": "workspace:*",
+    "@setwin/config": "workspace:*",
+    "@setwin/core": "workspace:*",
+    "@setwin/twin": "workspace:*",
+    "fastify": "^5.6.0"
+  }
+}

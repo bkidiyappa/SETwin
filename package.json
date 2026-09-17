@@ -1,0 +1,23 @@
+{
+  "name": "setwin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Software Engineering Twin — persistent engineering intelligence and governance",
+  "packageManager": "pnpm@10.34.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setwin": "tsx apps/cli/src/index.ts",
+    "dev": "tsx apps/api/src/server.ts",
+    "test": "vitest run",
+    "db:migrate": "tsx packages/database/src/migrate.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

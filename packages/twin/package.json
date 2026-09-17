@@ -1,0 +1,16 @@
+{
+  "name": "@setwin/twin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cucumber/gherkin": "^42.0.1",
+    "@cucumber/messages": "^34.2.1",
+    "@setwin/auth": "workspace:*",
+    "@setwin/database": "workspace:*",
+    "drizzle-orm": "^0.44.5"
+  }
+}

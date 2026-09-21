@@ -278,8 +278,15 @@ export async function createGherkin(
   );
   if (input.requirement) {
     const requirement = await getArtifact(databaseUrl, input.requirement, actor);
-    if (requirement.type !== "REQUIREMENT") {
-      throw new ValidationError(`Traceability target must be a REQUIREMENT, got ${requirement.type}`);
+    if (
+      requirement.type !== "REQUIREMENT" &&
+      requirement.type !== "STORY" &&
+      requirement.type !== "FEATURE" &&
+      requirement.type !== "EPIC"
+    ) {
+      throw new ValidationError(
+        `Traceability target must be a REQUIREMENT/STORY/FEATURE/EPIC, got ${requirement.type}`,
+      );
     }
     await createRelationship(
       databaseUrl,

@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
-import { apiGet, apiPost, clearToken, getToken, setToken, type LoginResult } from "../api";
+import {
+  apiGet,
+  apiPost,
+  clearToken,
+  getSessionUser,
+  getToken,
+  setSessionUser,
+  setToken,
+  type LoginResult,
+} from "../api";
 
 type Status = {
   name: string;
@@ -13,7 +22,8 @@ export function DashboardPage() {
   const [token, setTokenInput] = useState(getToken());
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
-  const [sessionUser, setSessionUser] = useState("");
+  const [sessionUser, setSessionLabel] = useState(getSessionUser()?.username ?? "");
+  const [sessionRoles, setSessionRoles] = useState((getSessionUser()?.roles ?? []).join(", "));
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -27,9 +37,18 @@ export function DashboardPage() {
     if (!getToken()) {
       return;
     }
-    apiGet<{ username: string }>("/auth/me")
-      .then((user) => setSessionUser(user.username))
-      .catch(() => setSessionUser(""));
+    apiGet<{ username: string; displayName: string; roles: string[]; permissions: string[] }>("/auth/me")
+      .then((user) => {
+        setSessionUser({
+          username: user.username,
+          displayName: user.displayName,
+          roles: user.roles ?? [],
+          permissions: user.permissions ?? [],
+        });
+        setSessionLabel(user.username);
+        setSessionRoles((user.roles ?? []).join(", "));
+      })
+      .catch(() => setSessionLabel(""));
   }, [token, message]);
 
   async function login(): Promise<void> {
@@ -39,8 +58,16 @@ export function DashboardPage() {
       const result = await apiPost<LoginResult>("/auth/login", { username, password }, { skipAuth: true });
       setToken(result.token);
       setTokenInput(result.token);
-      setSessionUser(result.user.username);
-      setMessage(`Logged in as ${result.user.username}`);
+      setSessionUser({
+        id: result.user.id,
+        username: result.user.username,
+        displayName: result.user.displayName,
+        roles: result.user.roles ?? [],
+        permissions: result.user.permissions ?? [],
+      });
+      setSessionLabel(result.user.username);
+      setSessionRoles((result.user.roles ?? []).join(", "));
+      setMessage(`Logged in as ${result.user.username} (${(result.user.roles ?? []).join(", ")})`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -83,14 +110,22 @@ export function DashboardPage() {
             onClick={() => {
               clearToken();
               setTokenInput("");
-              setSessionUser("");
+              setSessionLabel("");
+              setSessionRoles("");
               setMessage("Signed out");
             }}
           >
             Sign out
           </button>
         </div>
-        {sessionUser ? <p>Signed in as <strong>{sessionUser}</strong></p> : <p className="muted">Not signed in</p>}
+        {sessionUser ? (
+          <p>
+            Signed in as <strong>{sessionUser}</strong>
+            {sessionRoles ? <span className="muted"> · roles: {sessionRoles}</span> : null}
+          </p>
+        ) : (
+          <p className="muted">Not signed in</p>
+        )}
         {message ? <p>{message}</p> : null}
       </div>
 

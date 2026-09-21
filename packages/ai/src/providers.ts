@@ -35,31 +35,45 @@ function unavailable(provider: AiProviderName, model: string, error: string): Ai
 export function createOllamaProvider(): AiProvider {
   const baseUrl = (process.env.SETWIN_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
   const defaultModel = process.env.SETWIN_OLLAMA_MODEL ?? "qwen2.5:7b";
+  const timeoutMs = Number(process.env.SETWIN_OLLAMA_TIMEOUT_MS ?? 120_000);
   return {
     name: "ollama",
     isConfigured: () => true,
     async complete(request) {
       const model = request.model ?? defaultModel;
       try {
-        const result = await postJson(`${baseUrl}/api/generate`, {
-          model,
-          prompt: request.system ? `${request.system}\n\n${request.prompt}` : request.prompt,
-          stream: false,
-          options: { temperature: request.temperature ?? 0.2 },
-        });
+        const result = await postJson(
+          `${baseUrl}/api/generate`,
+          {
+            model,
+            prompt: request.system ? `${request.system}\n\n${request.prompt}` : request.prompt,
+            stream: false,
+            options: { temperature: request.temperature ?? 0.2 },
+          },
+          {},
+          Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120_000,
+        );
         if (!result.ok) {
-          return unavailable("ollama", model, `HTTP ${result.status}`);
+          return unavailable("ollama", model, `HTTP ${result.status}: ${result.text.slice(0, 200)}`);
         }
         const payload = result.json as { response?: string };
+        const text = payload.response ?? "";
+        if (!text.trim()) {
+          return unavailable("ollama", model, "Empty response from Ollama");
+        }
         return {
           provider: "ollama",
           model,
-          text: payload.response ?? "",
+          text,
           status: "ok",
           raw: result.json,
         };
       } catch (error) {
-        return unavailable("ollama", model, error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        const hint = /abort/i.test(message)
+          ? `Ollama timed out after ${timeoutMs}ms (raise SETWIN_OLLAMA_TIMEOUT_MS)`
+          : message;
+        return unavailable("ollama", model, hint);
       }
     },
   };

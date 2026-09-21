@@ -9,3 +9,35 @@ export {
   type CodingAgentName,
   type ScrumRole,
 } from "./service.ts";
+export {
+  ROLE_SKILLS,
+  buildRoleSystemPrompt,
+  getRoleSkill,
+  getRoleTask,
+  getSkillsDirectory,
+  listRoleSkills,
+  reloadRoleSkills,
+  roleForArtifactType,
+  type RoleSkill,
+  type RoleTaskSkill,
+} from "./skills.ts";
+export {
+  proposeFollowOnArtifacts,
+  reviseArtifactFromRejection,
+  saveArtifactDraft,
+  submitArtifactForReview,
+  type FollowOnKind,
+} from "./lifecycle.ts";
+export {
+  SDLC_STAGES,
+  actorCanApprove,
+  actorCanCreateStage,
+  advancePipelineStage,
+  getPipelineStatus,
+  getStageForType,
+  linkArtifacts,
+  type PipelineStatus,
+  type StageDefinition,
+  type StageId,
+  type StageStatus,
+} from "./pipeline.ts";

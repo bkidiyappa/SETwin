@@ -1,6 +1,20 @@
 const API_BASE = import.meta.env.VITE_SETWIN_API_URL ?? "/api";
 
 const TOKEN_EVENT = "setwin-token-changed";
+const SESSION_KEY = "setwin_session";
+
+export type SessionUser = {
+  id?: string;
+  username: string;
+  displayName: string;
+  roles: string[];
+  permissions: string[];
+};
+
+export type LoginResult = {
+  token: string;
+  user: SessionUser;
+};
 
 export function getToken(): string {
   return localStorage.getItem("setwin_token") ?? "";
@@ -13,6 +27,24 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem("setwin_token");
+  localStorage.removeItem(SESSION_KEY);
+  window.dispatchEvent(new Event(TOKEN_EVENT));
+}
+
+export function getSessionUser(): SessionUser | null {
+  const raw = localStorage.getItem(SESSION_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as SessionUser;
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionUser(user: SessionUser): void {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(user));
   window.dispatchEvent(new Event(TOKEN_EVENT));
 }
 
@@ -23,6 +55,25 @@ export function onTokenChange(listener: () => void): () => void {
     window.removeEventListener(TOKEN_EVENT, listener);
     window.removeEventListener("storage", listener);
   };
+}
+
+export function hasPermission(permission: string, user?: SessionUser | null): boolean {
+  const session = user ?? getSessionUser();
+  if (!session) {
+    return false;
+  }
+  if (session.roles.includes("administrator")) {
+    return true;
+  }
+  return session.permissions.includes(permission);
+}
+
+export function hasRole(role: string, user?: SessionUser | null): boolean {
+  const session = user ?? getSessionUser();
+  if (!session) {
+    return false;
+  }
+  return session.roles.includes("administrator") || session.roles.includes(role);
 }
 
 async function request<T>(path: string, init?: RequestInit, options?: { skipAuth?: boolean }): Promise<T> {
@@ -62,7 +113,17 @@ export async function apiPost<T>(path: string, body: unknown, options?: { skipAu
   );
 }
 
-export type LoginResult = {
-  token: string;
-  user: { username: string; displayName: string; roles: string[] };
-};
+export async function refreshSession(): Promise<SessionUser | null> {
+  if (!getToken()) {
+    return null;
+  }
+  const user = await apiGet<SessionUser>("/auth/me");
+  setSessionUser({
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    roles: user.roles ?? [],
+    permissions: user.permissions ?? [],
+  });
+  return getSessionUser();
+}

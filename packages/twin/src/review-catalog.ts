@@ -9,6 +9,7 @@ export type ApprovalPolicySeed = {
 
 const TYPE_APPROVALS: Partial<Record<ArtifactType, { mode: ApprovalMode; roles: string[] }>> = {
   REQUIREMENT: { mode: "PARALLEL", roles: ["product_owner"] },
+  STORY: { mode: "PARALLEL", roles: ["product_owner"] },
   EPIC: { mode: "PARALLEL", roles: ["product_owner"] },
   FEATURE: { mode: "PARALLEL", roles: ["product_owner"] },
   GHERKIN: { mode: "PARALLEL", roles: ["product_owner"] },

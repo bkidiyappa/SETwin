@@ -31,29 +31,21 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 
 ## Quick start
 
-Full walkthrough: **[Getting started](docs/getting-started.md)** (install → users → requirement → review → approve → audit → API/Web/MCP).
+Full walkthrough: **[Getting started](docs/getting-started.md)**. How pipeline, Explorer, and approvals fit together: **[Architecture](docs/architecture.md)**.
 
 ```bash
 pnpm install
 copy .env.example .env
 docker compose up -d
-pnpm test
 pnpm setwin -- init
-pnpm setwin -- status
 pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass
-pnpm setwin -- whoami
 pnpm setwin -- project create demo --name "Demo"
-pnpm setwin -- requirement create "Customers can cancel an unpaid order within 30 minutes." --project demo
-pnpm setwin -- requirement gherkin REQ-001
-pnpm setwin -- audit list
 pnpm dev
 pnpm web
 ```
 
-If PostgreSQL is not running, `status` still works and reports the database as unreachable without printing secrets. Artifact versions remain immutable; AI Gherkin is always DRAFT and never auto-approved.
-
-No cloud account is required for core local development. Optional AI and integration providers are configured via `SETWIN_*` env vars and degrade gracefully when unset.
+**Fresh wipe** (delete all twin data): `docker compose down -v` → `up -d` → `init` → recreate admin → Sign out/in on Web.
 
 ## Configuration
 

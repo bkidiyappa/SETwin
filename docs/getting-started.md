@@ -89,11 +89,33 @@ pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass
 ```
 
+On the Web UI: **Sign out**, then **Log in** again (tokens from the old DB are invalid).
+
+### Full data wipe (start from product + repo)
+
+To delete all projects, stories, reviews, and repos and begin fresh:
+
+```bash
+docker compose down -v
+docker compose up -d
+pnpm setwin -- init
+pnpm setwin -- user create admin --password admin-pass
+pnpm setwin -- login admin --password admin-pass
+```
+
+Then create a project (Repositories page or CLI), optionally register a repo, and use Workspace → Approve → Advance → Twin Explorer.
+
 ### Web UI sign-in
 
 1. Open `http://localhost:5173` (Dashboard) with API (`pnpm dev`) and Web (`pnpm web`) running.
 2. Enter username/password → **Log in** (or paste `stw_…` from `data/session.json` under Advanced).
-3. Open Twin Explorer — the `Authentication required` error should be gone.
+3. Open **Workspace** (`/workspace`) for: Prompt → editable Stories → **Submit → Approve** → Advance stages.
+   - Without approval, the next SDLC stage is blocked (Story → Design → Code → Tests).
+   - **Twin Explorer** (`/twin`): product filter, full node graph (zoom in for titles/details, Expand/Collapse modal), and three searchable cards (Requirements / Code / Tests). Click a node to refresh all cards with connected artifacts only.
+   - Role skills are markdown under `packages/agents/skills/*.md`. List with `pnpm setwin -- agent skills`.
+4. Twin Explorer / Repositories need the same session.
+
+See [architecture.md](architecture.md) for a detailed walkthrough of pipeline gates, relationships, and Explorer behavior.
 
 `/status` is public, so Database can show **up** before you sign in. Artifact pages need a Bearer token.
 
@@ -304,11 +326,73 @@ pnpm web
 
 (`pnpm approve-builds` only lists packages still waiting; if you previously selected none, `esbuild` is already recorded as denied and will not appear again.)
 
-In the UI: use **Dashboard → Log in** with username/password (or paste a CLI token under Advanced). Then open Twin Explorer, Reviews, Approvals, Audit, and AI activity.
+In the UI: use **Dashboard → Log in** with username/password (or paste a CLI token under Advanced). Then open Twin Explorer, **Repositories**, Reviews, Approvals, Audit, and AI activity.
 
 ---
 
-## 8. AI gateway (optional)
+## 8. Connect a real product repository
+
+SETwin is **not** a replacement for Git. Your product repo stays the source of code (and usually of `.feature` / test files). SETwin is the twin that remembers requirements, versions, reviews, approvals, and an indexed code graph.
+
+```text
+Your product git clone  --register/index-->  SETwin twin (Postgres)
+        |                                         |
+     source code                           REQ / GHK / reviews
+     tests / features                      approvals / audit
+```
+
+### 8.1 From the Web UI (recommended)
+
+1. Create a twin project (CLI once):  
+   `pnpm setwin -- project create myproduct --name "My Product"`
+2. Sign in on Dashboard.
+3. Open **Repositories** (`http://localhost:5173/repos`).
+4. Choose the project, paste an **absolute local path** to a git checkout the API can read, e.g. `C:\work\my-product`.
+5. Click **Register**, then **Index**.
+6. Use **Symbols** to browse the indexed code graph.
+
+The path must exist on the machine running `pnpm dev` (same laptop for local use).
+
+### 8.2 From the CLI
+
+```bash
+pnpm setwin -- project create myproduct --name "My Product"
+pnpm setwin -- repo register --project myproduct --path C:\work\my-product
+pnpm setwin -- repo list
+pnpm setwin -- repo index <repositoryId>
+pnpm setwin -- repo symbols <repositoryId>
+```
+
+### 8.3 Requirements and tests from that product
+
+Today these are **twin artifacts**, not an automatic full import of every file in the repo:
+
+| In the product repo | In SETwin |
+|---|---|
+| Source code | Indexed via **Repositories → Index** |
+| Requirement text / docs | `requirement create` or Twin artifacts |
+| `.feature` files | `gherkin create --file … --requirement REQ-…` |
+| Reviews / approvals | `workflow` / `review` (or UI) |
+
+Example — pull a feature file from the product repo into the twin:
+
+```bash
+pnpm setwin -- requirement create "Customers can cancel an unpaid order within 30 minutes." --project myproduct
+pnpm setwin -- gherkin create --project myproduct --file C:\work\my-product\features\cancel.feature --requirement REQ-001
+pnpm setwin -- workflow submit REQ-001
+```
+
+Change impact against that registered repo:
+
+```bash
+pnpm setwin -- change analyze --repository <repositoryId> --base main --head HEAD
+```
+
+**Not built yet as a single “import whole repo as the product” wizard:** automatic discovery of all requirements/tests from arbitrary folder layouts, bi-directional sync of every file, or treating Git as the only store for approved twin state. Register + index + create/link artifacts is the supported path now.
+
+---
+
+## 9. AI gateway (optional)
 
 Configure providers in `.env` (see `.env.example`). Ollama-first:
 
@@ -326,7 +410,7 @@ All model calls go through the gateway. Unconfigured providers fail gracefully.
 
 ---
 
-## 9. MCP server (optional)
+## 10. MCP server (optional)
 
 ```bash
 pnpm mcp
@@ -336,7 +420,7 @@ MCP speaks JSON-RPC over stdio and uses the same domain services as CLI/API (no 
 
 ---
 
-## 10. Later capabilities (short reference)
+## 11. Later capabilities (short reference)
 
 These are available after the core slice works. Use `--help` on each command for flags.
 
@@ -345,7 +429,8 @@ These are available after the core slice works. Use `--help` on each command for
 | Repository | `repo register`, `repo index`, `repo list`, `repo symbols` |
 | Change | `change analyze`, `change list` (see `pnpm setwin -- change --help`) |
 | Context | `context ingest`, `context search` |
-| AI scrum / coding agents | `agent propose`, `agent proposals`, `agent coding` |
+| AI scrum / coding agents | `agent skills`, `agent propose`, `agent proposals`, `agent coding` |
+| Stories / requirements (PO / QE) | `requirement stories`, `requirement edit`, `requirement submit`, `requirement revise-rejection`, `requirement follow-on`, `requirement gherkin` |
 | Testing | `test ingest`, `test list` |
 | CI/CD | `cicd adapters`, `cicd render` |
 | OpenSecant | `opensecant generate`, `opensecant execute` |
@@ -356,7 +441,7 @@ Templates also live under `templates/` and `.github/workflows/` for GitHub Actio
 
 ---
 
-## 11. Common failures
+## 12. Common failures
 
 | Symptom | What to check |
 |---|---|
@@ -369,7 +454,7 @@ Templates also live under `templates/` and `.github/workflows/` for GitHub Actio
 | Web UI empty / 401 | API running on `:8000`; **Log in** on Dashboard (stale browser tokens after DB reset break login — use Sign out, then Log in again) |
 | `:5173` connection refused | Second terminal: `pnpm web` (API alone is only `:8000`) |
 | `setwin` not recognized | Use `pnpm setwin -- …`, not a bare `setwin` |
-| `pnpm web` / esbuild error | In `pnpm-workspace.yaml` set `allowBuilds.esbuild: true`, then `pnpm install` and `pnpm web` |
+| Repository path rejected | Absolute local git path readable by the API process; project must exist |
 
 Get help for any command:
 
@@ -381,7 +466,7 @@ pnpm setwin -- requirement --help
 
 ---
 
-## 12. What not to do
+## 13. What not to do
 
 - Do not extend the Python prototype under `setwin/` with new product phases.
 - Do not treat AI drafts as approved.

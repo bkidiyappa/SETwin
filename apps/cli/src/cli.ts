@@ -55,11 +55,28 @@ import {
 } from "@setwin/twin";
 import { getAuditEvent, listAuditEvents, verifyAuditChain } from "@setwin/audit";
 import { completeViaGateway, listAiActions } from "@setwin/ai";
-import { createRequirement, generateGherkinDraft, showRequirement } from "@setwin/requirements";
+import {
+  createRequirement,
+  createRequirementFromPrompt,
+  createStoriesFromPrompt,
+  generateGherkinDraft,
+  reviseRequirementFromFeedback,
+  showRequirement,
+  updateStory,
+} from "@setwin/requirements";
 import { indexRepository, listRepositories, listSymbols, registerRepository } from "@setwin/repo";
 import { analyzeChange, getChangeAnalysis } from "@setwin/change";
 import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
-import { invokeCodingAgent, listProposals, proposeAsRole } from "@setwin/agents";
+import {
+  getRoleSkill,
+  invokeCodingAgent,
+  listProposals,
+  listRoleSkills,
+  proposeAsRole,
+  proposeFollowOnArtifacts,
+  reviseArtifactFromRejection,
+  submitArtifactForReview,
+} from "@setwin/agents";
 import { ingestTestRun, listTestRuns, parseJunitLike } from "@setwin/testing";
 import { listPipelineAdapters, renderPipelineTemplate, type PipelineProvider } from "@setwin/cicd";
 import { executeGeneratedTests, generateTestsFromArtifact } from "@setwin/opensecant";
@@ -720,7 +737,7 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
       io.log(result.ok ? `ok (${result.checked} events)` : `broken at ${result.brokenAt}: ${result.detail}`);
     });
 
-  const requirement = program.command("requirement").description("Requirement intelligence.");
+  const requirement = program.command("requirement").description("Requirement intelligence (PO / QE skills).");
   requirement
     .command("create")
     .argument("<text>")
@@ -734,6 +751,128 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
       io.log(`Ambiguities: ${row.checks.ambiguities.length}`);
       io.log(`Business rules: ${row.checks.businessRules.length}`);
       io.log(`Conflicts: ${row.checks.conflicts.length}`);
+    });
+  requirement
+    .command("from-prompt")
+    .argument("<prompt>")
+    .requiredOption("--project <key>", "Project key.")
+    .description("PO skill: convert a stakeholder prompt into STORY DRAFT(s) via AI (returns first).")
+    .action(async (prompt: string, options: { project: string }) => {
+      const actor = await requireActor(program);
+      const row = await createRequirementFromPrompt(
+        getSettings().databaseUrl,
+        { project: options.project, prompt },
+        actor,
+      );
+      io.log(`${row.key} v${row.currentVersion.version} DRAFT (ai=${row.aiStatus})`);
+      io.log(row.currentVersion.title);
+      if (row.aiError) {
+        io.log(row.aiError);
+      }
+    });
+  requirement
+    .command("stories")
+    .argument("<prompt>")
+    .requiredOption("--project <key>", "Project key.")
+    .description("PO skill: split a prompt into multiple editable STORY DRAFTs.")
+    .action(async (prompt: string, options: { project: string }) => {
+      const actor = await requireActor(program);
+      const batch = await createStoriesFromPrompt(
+        getSettings().databaseUrl,
+        { project: options.project, prompt },
+        actor,
+      );
+      io.log(`${batch.stories.length} stories (ai=${batch.aiStatus})`);
+      for (const row of batch.stories) {
+        io.log(`${row.key}\tv${row.currentVersion.version}\t${row.currentVersion.title}`);
+      }
+      if (batch.aiError) {
+        io.log(batch.aiError);
+      }
+    });
+  requirement
+    .command("edit")
+    .argument("<key>")
+    .requiredOption("--content <text>", "Updated story body.")
+    .option("--title <title>", "Optional new title.")
+    .description("Edit a STORY/REQUIREMENT DRAFT (creates a new version).")
+    .action(async (key: string, options: { content: string; title?: string }) => {
+      const actor = await requireActor(program);
+      const row = await updateStory(
+        getSettings().databaseUrl,
+        { key, content: options.content, title: options.title },
+        actor,
+      );
+      io.log(`${row.key} v${row.currentVersion.version} ${row.currentVersion.workflowState}`);
+    });
+  requirement
+    .command("submit")
+    .argument("<key>")
+    .option("--comment <text>", "Submit comment.")
+    .description("Submit a DRAFT artifact for review.")
+    .action(async (key: string, options: { comment?: string }) => {
+      const actor = await requireActor(program);
+      const row = await submitArtifactForReview(getSettings().databaseUrl, key, actor, options.comment);
+      io.log(`${row.key} v${row.currentVersion.version} ${row.currentVersion.workflowState}`);
+    });
+  requirement
+    .command("revise-rejection")
+    .argument("<key>")
+    .requiredOption("--reason <text>", "Rejection / change-request reason.")
+    .option("--resubmit", "Automatically resubmit after PO/role revises.")
+    .description("Role agent revises from rejection reason (PO for stories).")
+    .action(async (key: string, options: { reason: string; resubmit?: boolean }) => {
+      const actor = await requireActor(program);
+      const row = await reviseArtifactFromRejection(
+        getSettings().databaseUrl,
+        { key, reason: options.reason, resubmit: Boolean(options.resubmit) },
+        actor,
+      );
+      io.log(
+        `${row.key} v${row.currentVersion.version} ${row.currentVersion.workflowState} (ai=${row.aiStatus}, resubmit=${row.resubmitted})`,
+      );
+      if (row.aiError) {
+        io.log(row.aiError);
+      }
+    });
+  requirement
+    .command("follow-on")
+    .requiredOption("--project <key>", "Project key.")
+    .requiredOption("--from <keys>", "Comma-separated source story keys.")
+    .requiredOption("--kind <kind>", "design|architecture|code|tests")
+    .description("Generate architecture, code, or tests DRAFT from stories.")
+    .action(async (options: { project: string; from: string; kind: string }) => {
+      const actor = await requireActor(program);
+      const kind = options.kind as "architecture" | "code" | "tests";
+      const rows = await proposeFollowOnArtifacts(
+        getSettings().databaseUrl,
+        {
+          project: options.project,
+          sourceKeys: options.from.split(",").map((key) => key.trim()).filter(Boolean),
+          kind,
+        },
+        actor,
+      );
+      for (const row of rows) {
+        io.log(`${row.key} ${row.type} v${row.currentVersion.version} (ai=${row.aiStatus})`);
+      }
+    });
+  requirement
+    .command("revise")
+    .argument("<key>")
+    .requiredOption("--feedback <text>", "Review / approval feedback to address.")
+    .description("PO skill: revise a requirement DRAFT from approval feedback.")
+    .action(async (key: string, options: { feedback: string }) => {
+      const actor = await requireActor(program);
+      const row = await reviseRequirementFromFeedback(
+        getSettings().databaseUrl,
+        { key, feedback: options.feedback },
+        actor,
+      );
+      io.log(`${row.key} v${row.currentVersion.version} DRAFT (ai=${row.aiStatus})`);
+      if (row.aiError) {
+        io.log(row.aiError);
+      }
     });
   requirement
     .command("show")
@@ -750,11 +889,11 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
   requirement
     .command("gherkin")
     .argument("<key>")
-    .description("Generate DRAFT Gherkin via the AI gateway (never auto-approves).")
+    .description("QE skill: generate DRAFT Gherkin via the AI gateway (never auto-approves).")
     .action(async (key: string) => {
       const actor = await requireActor(program);
       const row = await generateGherkinDraft(getSettings().databaseUrl, key, actor);
-      io.log(`${row.gherkin.key} DRAFT (ai=${row.aiStatus})`);
+      io.log(`${row.gherkin.artifact.key} DRAFT (ai=${row.aiStatus})`);
     });
 
   const ai = program.command("ai").description("AI gateway.");
@@ -880,12 +1019,40 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
 
   const agent = program.command("agent").description("AI scrum team and coding agents.");
   agent
+    .command("skills")
+    .argument("[role]", "Optional role (e.g. product_owner).")
+    .description("List role skills / guardrails used as AI system prompts.")
+    .action(async (role?: string) => {
+      if (role) {
+        const skill = getRoleSkill(role);
+        io.log(`${skill.displayName} (${skill.role})`);
+        io.log(`Mission: ${skill.mission}`);
+        io.log("Skills:");
+        for (const row of skill.skills) {
+          io.log(`  - ${row}`);
+        }
+        io.log("Guardrails:");
+        for (const row of skill.guardrails) {
+          io.log(`  - ${row}`);
+        }
+        io.log("Tasks:");
+        for (const task of skill.tasks) {
+          io.log(`  - ${task.id}: ${task.title}`);
+        }
+        return;
+      }
+      for (const skill of listRoleSkills()) {
+        io.log(`${skill.role}\t${skill.displayName}\t${skill.tasks.map((task) => task.id).join(", ")}`);
+      }
+    });
+  agent
     .command("propose")
     .requiredOption("--project <key>", "Project key.")
     .requiredOption("--role <role>", "Scrum role.")
     .requiredOption("--topic <text>", "Topic.")
-    .description("Propose a DRAFT artifact as a role agent.")
-    .action(async (options: { project: string; role: string; topic: string }) => {
+    .option("--task <id>", "Optional skill task id (defaults to role's first task).")
+    .description("Propose a DRAFT artifact as a role agent (uses role skills as AI guardrails).")
+    .action(async (options: { project: string; role: string; topic: string; task?: string }) => {
       const actor = await requireActor(program);
       const row = await proposeAsRole(getSettings().databaseUrl, options, actor);
       io.log(`${row.id} ${row.role} ${row.status} ${row.artifactKey ?? "-"}`);

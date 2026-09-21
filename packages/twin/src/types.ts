@@ -1,5 +1,6 @@
 export const ARTIFACT_TYPES = [
   "REQUIREMENT",
+  "STORY",
   "EPIC",
   "FEATURE",
   "DESIGN",
@@ -15,6 +16,7 @@ export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 export const ARTIFACT_PREFIX: Record<ArtifactType, string> = {
   REQUIREMENT: "REQ",
+  STORY: "STY",
   EPIC: "EPC",
   FEATURE: "FEA",
   DESIGN: "DES",

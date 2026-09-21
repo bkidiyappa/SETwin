@@ -384,6 +384,9 @@ importers:
 
   packages/requirements:
     dependencies:
+      '@setwin/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@setwin/ai':
         specifier: workspace:*
         version: link:../ai

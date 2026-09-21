@@ -17,6 +17,7 @@ type PolicySeed = {
 
 const TYPE_APPROVERS: Partial<Record<ArtifactType, string>> = {
   REQUIREMENT: "product_owner",
+  STORY: "product_owner",
   EPIC: "product_owner",
   FEATURE: "product_owner",
   GHERKIN: "product_owner",

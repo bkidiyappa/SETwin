@@ -5,6 +5,7 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
+    "@setwin/agents": "workspace:*",
     "@setwin/ai": "workspace:*",
     "@setwin/audit": "workspace:*",
     "@setwin/auth": "workspace:*",

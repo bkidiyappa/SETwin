@@ -30,36 +30,41 @@ export async function completeViaGateway(
   }
   const providers = options.providers ?? createAllProviders();
   const order = routeProviders(request.task, options.preferredProvider);
-  let last: AiCompletionResult | undefined;
+  let lastAttempt: AiCompletionResult | undefined;
+  const skipNotes: string[] = [];
   for (const name of order) {
     const provider = providers.find((row) => row.name === name);
     if (!provider) {
       continue;
     }
     if (!provider.isConfigured() && name !== "ollama") {
-      last = {
-        provider: name,
-        model: request.model ?? name,
-        text: "",
-        status: "unavailable",
-        error: `${name} not configured`,
-      };
+      skipNotes.push(`${name} not configured`);
       continue;
     }
     const result = await provider.complete(request);
-    last = result;
+    lastAttempt = result;
     if (result.status === "ok" && result.text.trim()) {
       const actionId = await persistAction(databaseUrl, request, result, actor);
       return { ...result, actionId };
     }
   }
-  const failed: AiCompletionResult = last ?? {
-    provider: "ollama",
-    model: request.model ?? "unknown",
-    text: "",
-    status: "unavailable",
-    error: "No AI provider available",
-  };
+  const failed: AiCompletionResult = lastAttempt
+    ? {
+        ...lastAttempt,
+        error:
+          lastAttempt.error ||
+          (skipNotes.length > 0 ? `No usable provider. Skipped: ${skipNotes.join("; ")}` : "No AI provider available"),
+      }
+    : {
+        provider: "ollama",
+        model: request.model ?? "unknown",
+        text: "",
+        status: "unavailable",
+        error:
+          skipNotes.length > 0
+            ? `No AI provider available. Skipped: ${skipNotes.join("; ")}`
+            : "No AI provider available",
+      };
   const actionId = await persistAction(databaseUrl, request, failed, actor);
   return { ...failed, actionId };
 }

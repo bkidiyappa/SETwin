@@ -7,63 +7,18 @@ import { recordAuditEvent } from "@setwin/audit";
 import { NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import { agentProposals, codingAgentRuns, projects, withDatabase } from "@setwin/database";
 import { createArtifact } from "@setwin/twin";
+import { SCRUM_ROLES, buildRoleSystemPrompt, getRoleSkill, type ScrumRole } from "./skills.ts";
 
 const execFileAsync = promisify(execFile);
 
-export const SCRUM_ROLES = [
-  "product_owner",
-  "architect",
-  "developer",
-  "qe",
-  "security",
-  "sre",
-  "release",
-  "reviewer",
-] as const;
-
-export type ScrumRole = (typeof SCRUM_ROLES)[number];
+export { SCRUM_ROLES, type ScrumRole };
 
 export const CODING_AGENTS = ["opencode", "openhands", "claude-code", "cursor", "windsurf"] as const;
 export type CodingAgentName = (typeof CODING_AGENTS)[number];
 
-const ROLE_PROMPTS: Record<ScrumRole, { artifactType: string; instruction: string }> = {
-  product_owner: {
-    artifactType: "REQUIREMENT",
-    instruction: "Propose a refined requirement with acceptance criteria. Draft only.",
-  },
-  architect: {
-    artifactType: "ARCHITECTURE",
-    instruction: "Propose an architecture note covering components and boundaries. Draft only.",
-  },
-  developer: {
-    artifactType: "DESIGN",
-    instruction: "Propose an implementation design with modules and interfaces. Draft only.",
-  },
-  qe: {
-    artifactType: "TEST",
-    instruction: "Propose a test strategy and key scenarios. Draft only.",
-  },
-  security: {
-    artifactType: "DECISION",
-    instruction: "Propose security risks and mitigations. Draft only.",
-  },
-  sre: {
-    artifactType: "DESIGN",
-    instruction: "Propose reliability, observability, and operational concerns. Draft only.",
-  },
-  release: {
-    artifactType: "DECISION",
-    instruction: "Propose a release checklist and rollout plan. Draft only.",
-  },
-  reviewer: {
-    artifactType: "DECISION",
-    instruction: "Propose review findings and questions. Draft only.",
-  },
-};
-
 export async function proposeAsRole(
   databaseUrl: string,
-  input: { project: string; role: string; topic: string },
+  input: { project: string; role: string; topic: string; task?: string },
   actor?: Principal,
 ): Promise<{
   id: string;
@@ -78,12 +33,13 @@ export async function proposeAsRole(
   if (!SCRUM_ROLES.includes(role)) {
     throw new ValidationError(`Unknown scrum role: ${input.role}`);
   }
-  const spec = ROLE_PROMPTS[role];
+  const skill = getRoleSkill(role);
+  const taskId = input.task ?? skill.tasks[0]?.id;
   const ai = await completeViaGateway(
     databaseUrl,
     {
       task: "agent.propose",
-      system: `You are the SETwin ${role} agent. ${spec.instruction} Never mark anything approved.`,
+      system: buildRoleSystemPrompt(role, taskId),
       prompt: `Project ${input.project}. Topic: ${input.topic}`,
     },
     principal,
@@ -99,7 +55,7 @@ export async function proposeAsRole(
       databaseUrl,
       {
         project: input.project,
-        type: spec.artifactType,
+        type: skill.defaultArtifactType,
         title,
         content,
         provenanceSource: "AI_INFERRED",
@@ -124,7 +80,7 @@ export async function proposeAsRole(
     role,
     title,
     content,
-    artifactType: spec.artifactType,
+    artifactType: skill.defaultArtifactType,
     artifactKey,
     status: "DRAFT",
     aiActionId: ai.actionId,
@@ -139,7 +95,7 @@ export async function proposeAsRole(
     entityType: "agent_proposal",
     entityId: proposal.id,
     entityKey: artifactKey ?? proposal.id,
-    after: { role, status: "DRAFT" },
+    after: { role, status: "DRAFT", taskId },
     actor: principal,
   });
   return {

@@ -81,7 +81,7 @@ export function DashboardPage() {
       <div className="panel" style={{ marginBottom: "1rem" }}>
         <div className="muted">Sign in</div>
         <p className="muted" style={{ marginTop: "0.25rem" }}>
-          Twin Explorer, Reviews, Approvals, Audit, and AI activity require a session. Dashboard status alone does not.
+          Twin Explorer, Reviews, Audit, and AI activity require a session. Dashboard status alone does not.
         </p>
         <div className="toolbar">
           <input

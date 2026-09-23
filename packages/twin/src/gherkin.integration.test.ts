@@ -93,7 +93,7 @@ describe("gherkin twin", () => {
       { project: project.key, content: FEATURE, requirement: requirement.key },
       principal,
     );
-    expect(gherkin.artifact.key).toMatch(/^GHK-\d+$/);
+    expect(gherkin.artifact.key).toMatch(/^TST-\d+$/);
     expect(gherkin.artifact.currentVersion.status).toBe("DRAFT");
     expect(gherkin.feature.name).toBe("Order cancellation");
     expect(gherkin.feature.scenarios[0]?.steps).toHaveLength(5);

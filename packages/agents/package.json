@@ -9,6 +9,7 @@
     "@setwin/audit": "workspace:*",
     "@setwin/auth": "workspace:*",
     "@setwin/database": "workspace:*",
+    "@setwin/repo": "workspace:*",
     "@setwin/twin": "workspace:*",
     "drizzle-orm": "^0.44.5"
   }

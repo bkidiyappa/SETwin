@@ -89,7 +89,15 @@ async function request<T>(path: string, init?: RequestInit, options?: { skipAuth
   }
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!response.ok) {
-    throw new Error(await response.text());
+    const raw = await response.text();
+    let message = raw;
+    try {
+      const parsed = JSON.parse(raw) as { error?: string; message?: string };
+      message = parsed.error || parsed.message || raw;
+    } catch {
+      // keep raw text
+    }
+    throw new Error(message || `HTTP ${response.status}`);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -111,6 +119,18 @@ export async function apiPost<T>(path: string, body: unknown, options?: { skipAu
     },
     options,
   );
+}
+
+export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
 }
 
 export async function refreshSession(): Promise<SessionUser | null> {

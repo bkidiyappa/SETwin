@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { desc } from "drizzle-orm";
-import { getCorrelationId } from "@setwin/config";
+import { getCorrelationId, getLogger, getSettings } from "@setwin/config";
 import { requirePermission, type Principal } from "@setwin/auth";
 import { aiActions, withDatabase } from "@setwin/database";
+import { appendLlmLog } from "./llm-log.ts";
 import { createAllProviders } from "./providers.ts";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiProviderName } from "./types.ts";
+
+export { requireAiCompletion } from "./require.ts";
 
 const TASK_ROUTES: Record<string, AiProviderName[]> = {
   default: ["ollama", "openai", "anthropic", "azure", "gemini", "bedrock"],
@@ -19,6 +22,18 @@ export type GatewayOptions = {
   providers?: AiProvider[];
 };
 
+function truncateForLog(text: string, maxChars: number): { text: string; truncated: boolean; originalLength: number } {
+  const originalLength = text.length;
+  if (maxChars <= 0 || originalLength <= maxChars) {
+    return { text, truncated: false, originalLength };
+  }
+  return {
+    text: `${text.slice(0, maxChars)}\n…[truncated ${originalLength - maxChars} chars]`,
+    truncated: true,
+    originalLength,
+  };
+}
+
 export async function completeViaGateway(
   databaseUrl: string,
   request: AiCompletionRequest,
@@ -28,6 +43,12 @@ export async function completeViaGateway(
   if (actor) {
     await requirePermission(databaseUrl, actor, "ai:use");
   }
+  const settings = getSettings();
+  const maxChars = settings.llmLogMaxChars;
+  const systemLogged = truncateForLog(request.system ?? "", maxChars);
+  const promptLogged = truncateForLog(request.prompt, maxChars);
+  const callStarted = new Date();
+
   const providers = options.providers ?? createAllProviders();
   const order = routeProviders(request.task, options.preferredProvider);
   let lastAttempt: AiCompletionResult | undefined;
@@ -41,8 +62,26 @@ export async function completeViaGateway(
       skipNotes.push(`${name} not configured`);
       continue;
     }
+    const attemptStarted = new Date();
     const result = await provider.complete(request);
+    const attemptFinished = new Date();
     lastAttempt = result;
+    const responseLogged = truncateForLog(result.text ?? "", maxChars);
+    appendLlmLog({
+      task: request.task,
+      actor: actor?.username ?? null,
+      startedAt: attemptStarted,
+      finishedAt: attemptFinished,
+      durationMs: attemptFinished.getTime() - attemptStarted.getTime(),
+      provider: result.provider,
+      model: result.model,
+      status: result.status,
+      error: result.error ?? null,
+      system: systemLogged.text,
+      prompt: promptLogged.text,
+      response: responseLogged.text,
+      note: options.preferredProvider ? `preferred=${options.preferredProvider}` : undefined,
+    });
     if (result.status === "ok" && result.text.trim()) {
       const actionId = await persistAction(databaseUrl, request, result, actor);
       return { ...result, actionId };
@@ -65,6 +104,38 @@ export async function completeViaGateway(
             ? `No AI provider available. Skipped: ${skipNotes.join("; ")}`
             : "No AI provider available",
       };
+  const callFinished = new Date();
+  if (!lastAttempt) {
+    appendLlmLog({
+      task: request.task,
+      actor: actor?.username ?? null,
+      startedAt: callStarted,
+      finishedAt: callFinished,
+      durationMs: callFinished.getTime() - callStarted.getTime(),
+      provider: failed.provider,
+      model: failed.model,
+      status: failed.status,
+      error: failed.error ?? null,
+      system: systemLogged.text,
+      prompt: promptLogged.text,
+      response: "",
+      note: skipNotes.length ? `Skipped: ${skipNotes.join("; ")}` : undefined,
+    });
+  }
+  getLogger().warn(
+    {
+      llm: true,
+      phase: "unavailable",
+      task: request.task,
+      provider: failed.provider,
+      model: failed.model,
+      status: failed.status,
+      error: failed.error ?? null,
+      durationMs: callFinished.getTime() - callStarted.getTime(),
+      skipped: skipNotes,
+    },
+    "llm.unavailable",
+  );
   const actionId = await persistAction(databaseUrl, request, failed, actor);
   return { ...failed, actionId };
 }

@@ -57,6 +57,9 @@ export {
   listGherkin,
   listProjects,
   listRelationships,
+  softDeleteArtifact,
+  permanentlyDeleteTestArtifact,
+  updateProject,
 } from "./service.ts";
 export { parseGherkin } from "./parse.ts";
 export {

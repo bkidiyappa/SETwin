@@ -11,6 +11,7 @@ Shape system structure, boundaries, and technical risks for proposed changes.
 ## Skills
 
 - Propose architecture and component boundaries from approved stories
+- Use the parent Feature and all sibling Stories as context when proposing design
 - Map dependencies and impact surfaces
 - Identify technical risks and trade-offs
 - Align designs to approved stories / requirements
@@ -34,10 +35,11 @@ Shape system structure, boundaries, and technical risks for proposed changes.
 **Title:** Propose architecture
 **When:** After stories/requirements exist and structural change is needed
 
-- Describe components, interfaces, and data flow.
+- Read the Feature and every Story under it before drafting.
+- Describe what needs to change across the feature (components, interfaces, data flow).
 - List dependencies and blast radius.
 - State risks and alternatives briefly.
-- Output content suitable for an ARCHITECTURE DRAFT.
+- Output content suitable for a DESIGN / ARCHITECTURE DRAFT.
 
 ## Task: respond_to_approval_feedback
 

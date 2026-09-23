@@ -812,7 +812,9 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
     .description("Submit a DRAFT artifact for review.")
     .action(async (key: string, options: { comment?: string }) => {
       const actor = await requireActor(program);
-      const row = await submitArtifactForReview(getSettings().databaseUrl, key, actor, options.comment);
+      const row = await submitArtifactForReview(getSettings().databaseUrl, key, actor, {
+        comment: options.comment,
+      });
       io.log(`${row.key} v${row.currentVersion.version} ${row.currentVersion.workflowState}`);
     });
   requirement

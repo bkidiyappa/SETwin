@@ -17,6 +17,7 @@ import {
   listArtifacts,
   listProjects,
   listRelationships,
+  updateProject,
 } from "@setwin/twin";
 
 function actorOf(request: FastifyRequest): Principal | undefined {
@@ -27,15 +28,24 @@ export function registerTwinRoutes(app: FastifyInstance): void {
   app.get("/projects", async (request) => listProjects(getSettings().databaseUrl, actorOf(request)));
 
   app.post("/projects", async (request, reply) => {
-    const body = request.body as { key?: string; name?: string; description?: string };
+    const body = request.body as { key?: string; name?: string; description?: string; techStack?: string };
     if (!body?.key) {
       return reply.code(400).send({ error: "key is required" });
     }
     return createProject(
       getSettings().databaseUrl,
-      { key: body.key, name: body.name, description: body.description },
+      { key: body.key, name: body.name, description: body.description, techStack: body.techStack },
       actorOf(request),
     );
+  });
+
+  app.patch("/projects/:key", async (request, reply) => {
+    const params = request.params as { key: string };
+    const body = request.body as { name?: string; description?: string; techStack?: string };
+    if (body?.name === undefined && body?.description === undefined && body?.techStack === undefined) {
+      return reply.code(400).send({ error: "name, description, or techStack is required" });
+    }
+    return updateProject(getSettings().databaseUrl, params.key, body, actorOf(request));
   });
 
   app.get("/projects/:key", async (request) => {

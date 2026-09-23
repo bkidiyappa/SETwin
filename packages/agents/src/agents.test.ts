@@ -8,6 +8,7 @@ import {
   getSkillsDirectory,
   listRoleSkills,
   roleForArtifactType,
+  splitGherkinScenarios,
 } from "./index.ts";
 
 describe("agents", () => {
@@ -36,5 +37,29 @@ describe("agents", () => {
     expect(roleForArtifactType("ARCHITECTURE")).toBe("architect");
     expect(roleForArtifactType("CODE")).toBe("developer");
     expect(roleForArtifactType("TEST")).toBe("qe");
+  });
+
+  it("splits multi-scenario Gherkin into one document per Scenario", () => {
+    const docs = splitGherkinScenarios(`Feature: Login Page Implementation
+  Scenario: User can access the login page
+    Given the login page is accessible
+    When a user navigates to the login page
+    Then the login page should be displayed
+  Scenario: User can enter valid credentials and log in
+    Given the login page is accessible
+    When a user enters valid credentials
+    Then the user should be authenticated
+  Scenario: User can enter invalid credentials and receive an error message
+    Given the login page is accessible
+    When a user enters invalid credentials
+    Then an error message should be displayed`);
+    expect(docs).toHaveLength(3);
+    expect(docs[0]?.title).toBe("User can access the login page");
+    expect(docs[1]?.title).toBe("User can enter valid credentials and log in");
+    expect(docs[2]?.title).toBe("User can enter invalid credentials and receive an error message");
+    for (const doc of docs) {
+      expect(doc.content).toMatch(/^Feature: Login Page Implementation/m);
+      expect((doc.content.match(/^\s*Scenario:/gim) ?? []).length).toBe(1);
+    }
   });
 });

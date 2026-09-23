@@ -1,6 +1,6 @@
 import { buildRoleSystemPrompt } from "@setwin/agents";
 import { recordAuditEvent } from "@setwin/audit";
-import { completeViaGateway } from "@setwin/ai";
+import { completeViaGateway, requireAiCompletion } from "@setwin/ai";
 import { ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import {
   createArtifact,
@@ -91,17 +91,23 @@ export async function createStoriesFromPrompt(
   if (!prompt) {
     throw new ValidationError("Prompt is required");
   }
-  const ai = await completeViaGateway(
-    databaseUrl,
-    {
-      task: "story.split",
-      system: buildRoleSystemPrompt("product_owner", "prompt_to_stories"),
-      prompt: `Project: ${input.project}\n\nStakeholder prompt:\n${prompt}\n\nReturn JSON only.`,
-    },
-    actor,
+  const ai = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      {
+        task: "story.split",
+        system: buildRoleSystemPrompt("product_owner", "prompt_to_stories"),
+        prompt: `Project: ${input.project}\n\nStakeholder prompt:\n${prompt}\n\nReturn JSON only.`,
+      },
+      actor,
+    ),
+    "story.split",
   );
 
-  const drafts = parseStoryDrafts(ai.status === "ok" ? ai.text : "", prompt);
+  const drafts = parseStoryDrafts(ai.text, prompt);
+  if (!drafts.length) {
+    throw new ValidationError("LLM unavailable for story.split: no stories parsed from model response");
+  }
   const stories: Array<ArtifactRecord & { checks: RequirementChecks }> = [];
 
   for (const draft of drafts) {
@@ -112,7 +118,7 @@ export async function createStoriesFromPrompt(
         type: "STORY",
         title: draft.title,
         content: draft.content,
-        provenanceSource: ai.status === "ok" ? "AI_INFERRED" : "HUMAN_AUTHORED",
+        provenanceSource: "AI_INFERRED",
         provenanceAuthority: "SETWIN",
       },
       actor,
@@ -146,7 +152,35 @@ export async function createStoriesFromPrompt(
     }
   }
 
-  return { stories, aiStatus: ai.status, aiError: ai.error, prompt };
+  return { stories, aiStatus: "ok", prompt };
+}
+
+export function formatStoryBody(description: string, acceptanceCriteria: string): string {
+  const desc = description.trim();
+  let gherkin = acceptanceCriteria.trim();
+  if (gherkin && !/^Feature:/im.test(gherkin)) {
+    const headline = desc.split(/[.!\n]/)[0] || "Story";
+    gherkin = [
+      `Feature: ${headline}`,
+      "  Scenario: Acceptance",
+      "    Given the precondition is met",
+      "    When the described behavior occurs",
+      "    Then the acceptance criteria are satisfied",
+      "",
+      gherkin,
+    ].join("\n");
+  }
+  if (!gherkin) {
+    const title = desc.split(/[.!\n]/)[0] || "Story";
+    gherkin = [
+      `Feature: ${title}`,
+      "  Scenario: Happy path",
+      "    Given the precondition is met",
+      `    When the actor performs the action for "${title.replaceAll('"', "'")}"`,
+      "    Then the expected outcome is observed",
+    ].join("\n");
+  }
+  return ["## Description", desc, "", "## Acceptance Criteria", "", "```gherkin", gherkin, "```"].join("\n");
 }
 
 export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryDraft[] {
@@ -155,13 +189,23 @@ export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryD
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]) as { stories?: Array<{ title?: string; content?: string }> };
+        const parsed = JSON.parse(jsonMatch[0]) as {
+          stories?: Array<{
+            title?: string;
+            description?: string;
+            content?: string;
+            acceptanceCriteria?: string;
+            acceptance_criteria?: string;
+          }>;
+        };
         if (Array.isArray(parsed.stories) && parsed.stories.length) {
           return parsed.stories
-            .map((row) => ({
-              title: (row.title || "Story").trim().slice(0, 120),
-              content: (row.content || row.title || "").trim(),
-            }))
+            .map((row) => {
+              const title = (row.title || "Story").trim().slice(0, 120);
+              const description = (row.description || row.content || title).trim();
+              const ac = (row.acceptanceCriteria || row.acceptance_criteria || "").trim();
+              return { title, content: formatStoryBody(description, ac) };
+            })
             .filter((row) => row.content);
         }
       } catch {
@@ -176,13 +220,13 @@ export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryD
           lines[0]?.replace(/^##\s*Story\s*\d*\s*[:.-]?\s*/i, "").replace(/^\d+\.\s*/, "").slice(0, 120) ||
           `Story ${index + 1}`;
         const content = lines.slice(1).join("\n").trim() || section;
-        return { title, content };
+        return { title, content: formatStoryBody(content, "") };
       });
     }
     const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const title = lines[0]?.replace(/^#+\s*/, "").slice(0, 120) || fallbackPrompt.slice(0, 80);
     const content = lines.length > 1 ? lines.join("\n") : text;
-    return [{ title, content }];
+    return [{ title, content: formatStoryBody(content, "") }];
   }
   return splitPromptHeuristically(fallbackPrompt);
 }
@@ -196,13 +240,13 @@ function splitPromptHeuristically(prompt: string): StoryDraft[] {
     return [
       {
         title: prompt.split(/[.!\n]/)[0].slice(0, 80) || "Story",
-        content: prompt,
+        content: formatStoryBody(prompt, ""),
       },
     ];
   }
   return parts.map((part, index) => ({
     title: part.split(/[.!\n]/)[0].slice(0, 80) || `Story ${index + 1}`,
-    content: part,
+    content: formatStoryBody(part, ""),
   }));
 }
 
@@ -271,28 +315,28 @@ export async function reviseRequirementFromFeedback(
   if (!feedback) {
     throw new ValidationError("Feedback is required");
   }
-  const ai = await completeViaGateway(
-    databaseUrl,
-    {
-      task: "requirement.analyze",
-      system: buildRoleSystemPrompt("product_owner", "respond_to_approval_feedback"),
-      prompt: [
-        `Requirement ${current.key} current title: ${current.currentVersion.title}`,
-        "Current body:",
-        current.currentVersion.content,
-        "",
-        "Review / approval feedback:",
-        feedback,
-        "",
-        "Write the revised requirement body only.",
-      ].join("\n"),
-    },
-    actor,
+  const ai = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      {
+        task: "requirement.analyze",
+        system: buildRoleSystemPrompt("product_owner", "respond_to_approval_feedback"),
+        prompt: [
+          `Requirement ${current.key} current title: ${current.currentVersion.title}`,
+          "Current body:",
+          current.currentVersion.content,
+          "",
+          "Review / approval feedback:",
+          feedback,
+          "",
+          "Write the revised requirement body only.",
+        ].join("\n"),
+      },
+      actor,
+    ),
+    "requirement.analyze",
   );
-  let text =
-    ai.status === "ok" && ai.text.trim()
-      ? ai.text.trim()
-      : `${current.currentVersion.content}\n\nAddressed feedback:\n${feedback}`;
+  let text = ai.text.trim();
   const fenced = text.match(/```(?:markdown|text)?\s*([\s\S]*?)```/i);
   if (fenced) {
     text = fenced[1].trim();
@@ -303,7 +347,7 @@ export async function reviseRequirementFromFeedback(
     {
       title: current.currentVersion.title,
       content: text,
-      provenanceSource: ai.status === "ok" ? "AI_INFERRED" : "HUMAN_AUTHORED",
+      provenanceSource: "AI_INFERRED",
     },
     actor,
   );
@@ -314,10 +358,10 @@ export async function reviseRequirementFromFeedback(
     entityId: updated.id,
     entityKey: updated.key,
     version: updated.currentVersion.version,
-    after: { checks, aiStatus: ai.status },
+    after: { checks, aiStatus: "ok" },
     actor,
   });
-  return { ...updated, checks, aiStatus: ai.status, aiError: ai.error };
+  return { ...updated, checks, aiStatus: "ok" };
 }
 
 export async function showRequirement(
@@ -370,26 +414,27 @@ export async function generateGherkinDraft(
   const requirement = await showRequirement(databaseUrl, key, actor);
   const system = buildRoleSystemPrompt("qe", "requirement_to_tests");
   const prompt = `Story/Requirement ${requirement.key}: ${requirement.currentVersion.title}\n\n${requirement.currentVersion.content}\n\nWrite a Feature with at least one Scenario. Output only Gherkin.`;
-  const ai = await completeViaGateway(
-    databaseUrl,
-    { task: "gherkin.generate", prompt, system },
-    actor,
+  const ai = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      { task: "gherkin.generate", prompt, system },
+      actor,
+    ),
+    "gherkin.generate",
   );
 
   let content = ai.text.trim();
-  if (ai.status !== "ok" || !content) {
-    content = deterministicGherkin(requirement.currentVersion.title, requirement.currentVersion.content);
-  } else {
-    const fenced = content.match(/```(?:gherkin)?\s*([\s\S]*?)```/i);
-    if (fenced) {
-      content = fenced[1].trim();
-    }
+  const fenced = content.match(/```(?:gherkin)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    content = fenced[1].trim();
   }
 
   try {
     parseGherkin(content);
   } catch {
-    content = deterministicGherkin(requirement.currentVersion.title, requirement.currentVersion.content);
+    throw new ValidationError(
+      "LLM unavailable for gherkin.generate: model response was not valid Gherkin. Task not completed.",
+    );
   }
 
   const gherkin = await createGherkin(
@@ -413,21 +458,8 @@ export async function generateGherkinDraft(
     entityId: artifact.id,
     entityKey: artifact.key,
     version: artifact.currentVersion.version,
-    after: { requirement: requirement.key, aiStatus: ai.status, draftOnly: true, roleSkill: "qe" },
+    after: { requirement: requirement.key, aiStatus: "ok", draftOnly: true, roleSkill: "qe" },
     actor,
   });
-  return { gherkin, aiStatus: ai.status, aiError: ai.error };
-}
-
-function deterministicGherkin(title: string, content: string): string {
-  const safeTitle = title.replaceAll('"', "'");
-  return [
-    `Feature: ${safeTitle}`,
-    `  ${content.split("\n")[0] || "Generated from story"}`,
-    "",
-    "  Scenario: Happy path",
-    "    Given the precondition is met",
-    `    When the actor performs the action for "${safeTitle}"`,
-    "    Then the expected outcome is observed",
-  ].join("\n");
+  return { gherkin, aiStatus: "ok" };
 }

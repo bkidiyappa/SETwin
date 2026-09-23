@@ -44,12 +44,54 @@ export async function gitDiff(repoPath: string, baseRef: string, headRef: string
   return execGit(repoPath, ["diff", "--stat", `${baseRef}...${headRef}`]);
 }
 
+export async function gitUnifiedDiff(repoPath: string, paths?: string[]): Promise<string> {
+  const args = ["diff", "--no-color", "HEAD", "--"];
+  if (paths?.length) {
+    args.push(...paths);
+  }
+  try {
+    return (await execGit(repoPath, args)).trim();
+  } catch {
+    return "";
+  }
+}
+
 export async function gitDiffNameOnly(repoPath: string, baseRef: string, headRef: string): Promise<string[]> {
   const output = await execGit(repoPath, ["diff", "--name-only", `${baseRef}...${headRef}`]);
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+/** Build a unified diff between before/after text for a relative path. */
+export function unifiedDiffForFile(relativePath: string, before: string | null, after: string): string {
+  const norm = relativePath.replaceAll("\\", "/");
+  const oldLines = before == null ? [] : before.replace(/\r\n/g, "\n").split("\n");
+  const newLines = after.replace(/\r\n/g, "\n").split("\n");
+  // Drop trailing empty line from split of empty string
+  if (oldLines.length === 1 && oldLines[0] === "") {
+    oldLines.length = 0;
+  }
+  if (newLines.length === 1 && newLines[0] === "" && after === "") {
+    newLines.length = 0;
+  }
+  const header =
+    before == null
+      ? [`diff --git a/${norm} b/${norm}`, "new file mode 100644", `--- /dev/null`, `+++ b/${norm}`]
+      : [`diff --git a/${norm} b/${norm}`, `--- a/${norm}`, `+++ b/${norm}`];
+  const hunkLines: string[] = [];
+  // Simple full-file hunk (clear enough for review UX)
+  const oldCount = Math.max(oldLines.length, 0);
+  const newCount = Math.max(newLines.length, 0);
+  hunkLines.push(`@@ -${before == null ? 0 : 1},${oldCount} +1,${newCount} @@`);
+  for (const line of oldLines) {
+    hunkLines.push(`-${line}`);
+  }
+  for (const line of newLines) {
+    hunkLines.push(`+${line}`);
+  }
+  return [...header, ...hunkLines].join("\n");
 }
 
 export async function listSourceFiles(root: string, limit = 200): Promise<string[]> {

@@ -21,7 +21,7 @@ import { registerGherkinRoutes } from "./gherkin.ts";
 import { registerWorkflowRoutes } from "./workflow.ts";
 import { registerReviewRoutes } from "./review.ts";
 import { registerPhaseRoutes } from "./phases.ts";
-
+import { registerAttachmentRoutes } from "./attachments.ts";
 export function createApp() {
   const settings = getSettings();
   setupLogging(settings.logLevel);
@@ -69,6 +69,7 @@ export function createApp() {
   registerWorkflowRoutes(app);
   registerReviewRoutes(app);
   registerPhaseRoutes(app);
+  registerAttachmentRoutes(app);
 
   return app;
 }

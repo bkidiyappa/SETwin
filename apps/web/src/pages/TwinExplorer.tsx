@@ -304,18 +304,22 @@ export function TwinExplorerPage() {
 
   const relatedRequirements = useMemo(() => {
     const base = connectedKeys
-      ? requirementsAll.filter((row) => connectedKeys.has(row.key))
+      ? requirementsAll.filter((row) => connectedKeys.has(row.key.toUpperCase()))
       : requirementsAll;
     return base.filter((row) => matchesQuery(row, reqQuery));
   }, [requirementsAll, connectedKeys, reqQuery]);
 
   const relatedCode = useMemo(() => {
-    const base = connectedKeys ? codeAll.filter((row) => connectedKeys.has(row.key)) : codeAll;
+    const base = connectedKeys
+      ? codeAll.filter((row) => connectedKeys.has(row.key.toUpperCase()))
+      : codeAll;
     return base.filter((row) => matchesQuery(row, codeQuery));
   }, [codeAll, connectedKeys, codeQuery]);
 
   const relatedTests = useMemo(() => {
-    const base = connectedKeys ? testsAll.filter((row) => connectedKeys.has(row.key)) : testsAll;
+    const base = connectedKeys
+      ? testsAll.filter((row) => connectedKeys.has(row.key.toUpperCase()))
+      : testsAll;
     return base.filter((row) => matchesQuery(row, testQuery));
   }, [testsAll, connectedKeys, testQuery]);
 
@@ -416,7 +420,8 @@ export function TwinExplorerPage() {
                 return null;
               }
               const dimmed =
-                connectedKeys && (!connectedKeys.has(from.key) || !connectedKeys.has(to.key));
+                connectedKeys &&
+                (!connectedKeys.has(from.key.toUpperCase()) || !connectedKeys.has(to.key.toUpperCase()));
               return (
                 <line
                   key={`${edge.from}-${edge.type}-${edge.to}`}
@@ -429,14 +434,18 @@ export function TwinExplorerPage() {
               );
             })}
             {nodes.map((node) => {
-              const inFocus = !connectedKeys || connectedKeys.has(node.key);
-              const isSelected = node.key === selectedKey;
+              const inFocus = !connectedKeys || connectedKeys.has(node.key.toUpperCase());
+              const isSelected = Boolean(selectedKey) && node.key.toUpperCase() === selectedKey.toUpperCase();
               const radius = Math.min(28, 10 + Math.sqrt(node.degree + 1) * 4) + (isSelected ? 4 : 0);
               return (
                 <g
                   key={node.key}
                   opacity={inFocus ? 1 : 0.18}
-                  onClick={() => selectArtifact(node.key)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    selectArtifact(node.key);
+                  }}
+                  onPointerDown={(event) => event.stopPropagation()}
                   style={{ cursor: "pointer" }}
                 >
                   <circle
@@ -482,7 +491,7 @@ export function TwinExplorerPage() {
       <button
         key={row.key}
         type="button"
-        className={`twin-list-item ${selectedKey === row.key ? "active" : ""}`}
+        className={`twin-list-item ${selectedKey && selectedKey.toUpperCase() === row.key.toUpperCase() ? "active" : ""}`}
         onClick={() => setSelectedKey(row.key)}
       >
         <span className="twin-type-dot" style={{ background: CATEGORY_COLOR[categoryOf(row.type)] }} />

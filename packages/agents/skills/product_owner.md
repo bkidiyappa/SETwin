@@ -38,9 +38,10 @@ Turn stakeholder intent into clear, testable user stories (and related requireme
 **When:** Workspace prompt or stakeholder asks for new behavior
 
 - Split the prompt into the smallest set of independently deliverable user stories with clear logical boundaries.
-- Each story must have a short title and a body with context, rules, and acceptance criteria.
+- Each story must have: a short **title** (description headline), a **description** paragraph, and **acceptance criteria in Gherkin** (Feature / Scenario / Given-When-Then).
 - Prefer 1–5 stories; merge only when boundaries would be artificial.
-- Output JSON only in this shape: `{"stories":[{"title":"...","content":"..."}]}`.
+- Output JSON only in this shape:
+  `{"stories":[{"title":"...","description":"...","acceptanceCriteria":"Feature: ...\\n  Scenario: ...\\n    Given ...\\n    When ...\\n    Then ..."}]}`
 - Do not approve; content is for STORY DRAFT artifacts only.
 
 ## Task: prompt_to_requirement

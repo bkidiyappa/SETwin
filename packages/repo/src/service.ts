@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { recordAuditEvent } from "@setwin/audit";
-import { NotFoundError, requirePermission, type Principal } from "@setwin/auth";
+import { NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import {
   codeEdges,
   codeRepositories,
@@ -9,7 +11,22 @@ import {
   projects,
   withDatabase,
 } from "@setwin/database";
-import { gitRevParse, listSourceFiles, parseFile } from "./parse.ts";
+import { gitRevParse, listSourceFiles, parseFile, unifiedDiffForFile } from "./parse.ts";
+import { isTestPath } from "./test-layout.ts";
+
+export type ProposedFileChange = {
+  path: string;
+  content: string;
+  action?: "add" | "modify";
+};
+
+export type AppliedChangeResult = {
+  repoId: string;
+  repoPath: string;
+  applied: Array<{ path: string; action: "add" | "modify" }>;
+  diff: string;
+  summaryLines: string[];
+};
 
 export async function registerRepository(
   databaseUrl: string,
@@ -126,17 +143,26 @@ export async function indexRepository(
 export async function listRepositories(
   databaseUrl: string,
   actor?: Principal,
-): Promise<Array<{ id: string; path: string; remoteUrl: string; defaultBranch: string; lastIndexedAt: Date | null }>> {
+  filter?: { project?: string },
+): Promise<
+  Array<{ id: string; path: string; remoteUrl: string; defaultBranch: string; lastIndexedAt: Date | null; projectKey?: string }>
+> {
   await requirePermission(databaseUrl, actor, "repo:view");
   return withDatabase(databaseUrl, async ({ db }) => {
     const rows = await db.select().from(codeRepositories);
-    return rows.map((row) => ({
-      id: row.id,
-      path: row.path,
-      remoteUrl: row.remoteUrl,
-      defaultBranch: row.defaultBranch,
-      lastIndexedAt: row.lastIndexedAt,
-    }));
+    const projectRows = await db.select().from(projects);
+    const projectById = new Map(projectRows.map((row) => [row.id, row.key]));
+    const wanted = filter?.project?.trim().toLowerCase();
+    return rows
+      .map((row) => ({
+        id: row.id,
+        path: row.path,
+        remoteUrl: row.remoteUrl,
+        defaultBranch: row.defaultBranch,
+        lastIndexedAt: row.lastIndexedAt,
+        projectKey: projectById.get(row.projectId),
+      }))
+      .filter((row) => !wanted || row.projectKey === wanted);
   });
 }
 
@@ -156,4 +182,129 @@ export async function listSymbols(
       name: row.name,
     }));
   });
+}
+
+function safeRelativePath(relativePath: string): string {
+  const normalized = relativePath.replaceAll("\\", "/").replace(/^\/+/, "").trim();
+  if (!normalized || normalized.includes("..") || path.isAbsolute(normalized)) {
+    throw new ValidationError(`Unsafe file path: ${relativePath}`);
+  }
+  return normalized;
+}
+
+/**
+ * Write proposed files under a registered repository and return a unified diff of the changes.
+ * Changes remain in the working tree (not committed) for human review.
+ */
+export async function applyProposedChanges(
+  databaseUrl: string,
+  input: { project: string; repositoryId?: string; files: ProposedFileChange[]; summary?: string },
+  actor?: Principal,
+): Promise<AppliedChangeResult> {
+  const principal = await requirePermission(databaseUrl, actor, "artifact:create");
+  const repos = await listRepositories(databaseUrl, principal, { project: input.project });
+  if (!repos.length) {
+    throw new ValidationError(
+      `No repository registered for project ${input.project}. Register one on Setup before generating code.`,
+    );
+  }
+  const repo = input.repositoryId
+    ? repos.find((row) => row.id === input.repositoryId)
+    : repos[0];
+  if (!repo) {
+    throw new NotFoundError(`Repository not found for project ${input.project}`);
+  }
+  if (!input.files.length) {
+    throw new ValidationError("At least one file change is required");
+  }
+
+  const applied: Array<{ path: string; action: "add" | "modify" }> = [];
+  const diffs: string[] = [];
+
+  for (const file of input.files) {
+    const relative = safeRelativePath(file.path);
+    const absolute = path.join(repo.path, relative);
+    // Ensure we stay inside repo root
+    if (!absolute.replaceAll("\\", "/").startsWith(repo.path.replaceAll("\\", "/"))) {
+      throw new ValidationError(`Path escapes repository root: ${file.path}`);
+    }
+    let before: string | null = null;
+    try {
+      before = await readFile(absolute, "utf8");
+    } catch {
+      before = null;
+    }
+    const action: "add" | "modify" = before == null ? "add" : "modify";
+    await mkdir(path.dirname(absolute), { recursive: true });
+    await writeFile(absolute, file.content, "utf8");
+    applied.push({ path: relative, action });
+    diffs.push(unifiedDiffForFile(relative, before, file.content));
+  }
+
+  const summaryLines = [
+    input.summary?.trim() || `Applied ${applied.length} file change(s) to ${repo.path}`,
+    ...applied.map((row) => `${row.action}: ${row.path}`),
+  ];
+
+  await recordAuditEvent(databaseUrl, {
+    action: "repo.apply_changes",
+    entityType: "repository",
+    entityId: repo.id,
+    entityKey: repo.path,
+    after: { files: applied, summary: input.summary ?? "" },
+    actor: principal,
+  });
+
+  return {
+    repoId: repo.id,
+    repoPath: repo.path,
+    applied,
+    diff: diffs.join("\n\n"),
+    summaryLines,
+  };
+}
+
+export type RepoFileSnapshot = {
+  path: string;
+  excerpt: string;
+  isTest: boolean;
+};
+
+/** List source/test files under a registered repo with short excerpts for LLM context. */
+export async function snapshotRepositoryFiles(
+  databaseUrl: string,
+  input: { project: string; repositoryId?: string; limit?: number },
+  actor?: Principal,
+): Promise<{ repoId: string; repoPath: string; files: RepoFileSnapshot[] }> {
+  await requirePermission(databaseUrl, actor, "repo:view");
+  const repos = await listRepositories(databaseUrl, actor, { project: input.project });
+  const repo = input.repositoryId ? repos.find((row) => row.id === input.repositoryId) : repos[0];
+  if (!repo) {
+    throw new NotFoundError(`Repository not found for project ${input.project}`);
+  }
+  const limit = input.limit ?? 40;
+  const absoluteFiles = await listSourceFiles(repo.path, 300);
+  const ranked = absoluteFiles
+    .map((full) => {
+      const relative = path.relative(repo.path, full).replaceAll("\\", "/");
+      const isTest = isTestPath(relative);
+      return { full, relative, isTest };
+    })
+    .sort((a, b) => Number(b.isTest) - Number(a.isTest) || a.relative.localeCompare(b.relative))
+    .slice(0, limit);
+
+  const files: RepoFileSnapshot[] = [];
+  for (const row of ranked) {
+    try {
+      const raw = await readFile(row.full, "utf8");
+      files.push({
+        path: row.relative,
+        isTest: row.isTest,
+        excerpt: raw.length > 1200 ? `${raw.slice(0, 1200)}\n/* …truncated… */` : raw,
+      });
+    } catch {
+      // skip unreadable
+    }
+  }
+  return { repoId: repo.id, repoPath: repo.path, files };
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, or } from "drizzle-orm";
 import { recordAuditEvent } from "@setwin/audit";
 import {
+  AuthorizationError,
   ConflictError,
   NotFoundError,
   ValidationError,
@@ -9,6 +10,8 @@ import {
   type Principal,
 } from "@setwin/auth";
 import {
+  approvalDecisions,
+  approvalRequests,
   artifactRelationships,
   artifactVersions,
   artifacts,
@@ -16,7 +19,10 @@ import {
   gherkinScenarios,
   gherkinSteps,
   projects,
+  reviewFindings,
+  reviews,
   withDatabase,
+  workflowTransitions,
 } from "@setwin/database";
 import {
   ARTIFACT_PREFIX,
@@ -91,12 +97,13 @@ function projectKey(value: string): string {
 
 export async function createProject(
   databaseUrl: string,
-  input: { key: string; name?: string; description?: string },
+  input: { key: string; name?: string; description?: string; techStack?: string },
   actor?: Principal,
 ): Promise<ProjectRecord> {
   const principal = await requirePermission(databaseUrl, actor, "project:create");
   const key = projectKey(input.key);
   const name = input.name?.trim() || key;
+  const techStack = input.techStack?.trim() ?? "";
   const row = await withDatabase(databaseUrl, async ({ db }) => {
     const existing = (await db.select().from(projects).where(eq(projects.key, key)))[0];
     if (existing) {
@@ -107,6 +114,7 @@ export async function createProject(
       key,
       name,
       description: input.description?.trim() ?? "",
+      techStack,
       createdBy: principal.id,
       createdAt: new Date(),
     };
@@ -118,10 +126,49 @@ export async function createProject(
     entityType: "project",
     entityId: row.id,
     entityKey: row.key,
-    after: { key: row.key, name: row.name },
+    after: { key: row.key, name: row.name, techStack: row.techStack },
     actor: principal,
   });
   return row;
+}
+
+export async function updateProject(
+  databaseUrl: string,
+  key: string,
+  input: { name?: string; description?: string; techStack?: string },
+  actor?: Principal,
+): Promise<ProjectRecord> {
+  const principal = await requirePermission(databaseUrl, actor, "project:create");
+  const updated = await withDatabase(databaseUrl, async ({ db }) => {
+    const row = (await db.select().from(projects).where(eq(projects.key, projectKey(key))))[0];
+    if (!row) {
+      throw new NotFoundError(`Project not found: ${key}`);
+    }
+    const patch: Partial<typeof projects.$inferInsert> = {};
+    if (input.name !== undefined) {
+      patch.name = input.name.trim() || row.name;
+    }
+    if (input.description !== undefined) {
+      patch.description = input.description.trim();
+    }
+    if (input.techStack !== undefined) {
+      patch.techStack = input.techStack.trim();
+    }
+    if (Object.keys(patch).length) {
+      await db.update(projects).set(patch).where(eq(projects.id, row.id));
+    }
+    const next = (await db.select().from(projects).where(eq(projects.id, row.id)))[0]!;
+    return toProject(next);
+  });
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.project.update",
+    entityType: "project",
+    entityId: updated.id,
+    entityKey: updated.key,
+    after: { name: updated.name, techStack: updated.techStack },
+    actor: principal,
+  });
+  return updated;
 }
 
 export async function listProjects(databaseUrl: string, actor?: Principal): Promise<ProjectRecord[]> {
@@ -221,7 +268,7 @@ export async function createArtifact(
 export async function listArtifacts(
   databaseUrl: string,
   actor?: Principal,
-  filter?: { project?: string; type?: string },
+  filter?: { project?: string; type?: string; includeDeleted?: boolean },
 ): Promise<ArtifactRecord[]> {
   await requirePermission(databaseUrl, actor, "artifact:view");
   const type = filter?.type ? parseArtifactType(filter.type) : undefined;
@@ -237,10 +284,18 @@ export async function listArtifacts(
     const rows = projectId
       ? await client.db.select().from(artifacts).where(eq(artifacts.projectId, projectId)).orderBy(asc(artifacts.key))
       : await client.db.select().from(artifacts).orderBy(asc(artifacts.key));
-    const filtered = type ? rows.filter((row) => row.type === type) : rows;
+    const filtered = rows.filter((row) => {
+      if (!filter?.includeDeleted && row.deletedAt) {
+        return false;
+      }
+      if (type && row.type !== type) {
+        return false;
+      }
+      return true;
+    });
     const result: ArtifactRecord[] = [];
     for (const row of filtered) {
-      result.push(await loadArtifact(client, row.key));
+      result.push(await loadArtifact(client, row.key, { allowDeleted: Boolean(filter?.includeDeleted) }));
     }
     return result;
   });
@@ -249,6 +304,157 @@ export async function listArtifacts(
 export async function getArtifact(databaseUrl: string, key: string, actor?: Principal): Promise<ArtifactRecord> {
   await requirePermission(databaseUrl, actor, "artifact:view");
   return withDatabase(databaseUrl, async (client) => loadArtifact(client, key.trim().toUpperCase()));
+}
+
+function requireAdmin(actor?: Principal): Principal {
+  if (!actor?.roles.includes("administrator")) {
+    throw new AuthorizationError("Administrator role required");
+  }
+  return actor;
+}
+
+/** Soft-delete an artifact. Admins always; DRAFT tests may be removed by test authors. */
+export async function softDeleteArtifact(
+  databaseUrl: string,
+  key: string,
+  actor?: Principal,
+): Promise<ArtifactRecord> {
+  const principal = actor;
+  if (!principal) {
+    throw new AuthorizationError("Authentication required");
+  }
+  await requirePermission(databaseUrl, principal, "artifact:view");
+  const updated = await withDatabase(databaseUrl, async (client) => {
+    const artifact = (await client.db.select().from(artifacts).where(eq(artifacts.key, key.trim().toUpperCase())))[0];
+    if (!artifact || artifact.deletedAt) {
+      throw new NotFoundError(`Artifact not found: ${key}`);
+    }
+    const loaded = await loadArtifact(client, artifact.key, { allowDeleted: true });
+    const isDraftTest =
+      (loaded.type === "GHERKIN" || loaded.type === "TEST") &&
+      loaded.currentVersion.workflowState === "DRAFT";
+    const isAdmin = principal.roles.includes("administrator");
+    if (!isAdmin && !isDraftTest) {
+      throw new AuthorizationError("Administrator role required");
+    }
+    if (!isAdmin && isDraftTest) {
+      await requirePermission(databaseUrl, principal, "artifact:create");
+    }
+    const now = new Date();
+    await client.db.update(artifacts).set({ deletedAt: now }).where(eq(artifacts.id, artifact.id));
+    return loadArtifact(client, artifact.key, { allowDeleted: true });
+  });
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.artifact.soft_delete",
+    entityType: "artifact",
+    entityId: updated.id,
+    entityKey: updated.key,
+    version: updated.currentVersion.version,
+    after: { deletedAt: updated.deletedAt?.toISOString() ?? new Date().toISOString() },
+    actor: principal,
+  });
+  return updated;
+}
+
+/**
+ * Permanently delete a TEST/GHERKIN artifact (workspace Tests column).
+ * Allowed for DRAFT tests (with create permission) or administrators.
+ */
+export async function permanentlyDeleteTestArtifact(
+  databaseUrl: string,
+  key: string,
+  actor?: Principal,
+): Promise<{ key: string; deleted: true }> {
+  const principal = actor;
+  if (!principal) {
+    throw new AuthorizationError("Authentication required");
+  }
+  await requirePermission(databaseUrl, principal, "artifact:view");
+
+  const snapshot = await withDatabase(databaseUrl, async (client) => {
+    const artifact = (await client.db.select().from(artifacts).where(eq(artifacts.key, key.trim().toUpperCase())))[0];
+    if (!artifact) {
+      throw new NotFoundError(`Artifact not found: ${key}`);
+    }
+    const loaded = await loadArtifact(client, artifact.key, { allowDeleted: true });
+    if (loaded.type !== "GHERKIN" && loaded.type !== "TEST") {
+      throw new ValidationError(`Only TEST/GHERKIN artifacts can be permanently deleted (got ${loaded.type})`);
+    }
+    const isAdmin = principal.roles.includes("administrator");
+    const isDraft = loaded.currentVersion.workflowState === "DRAFT";
+    if (!isAdmin && !isDraft) {
+      throw new AuthorizationError("Only DRAFT tests can be permanently deleted (or admin)");
+    }
+    if (!isAdmin) {
+      await requirePermission(databaseUrl, principal, "artifact:create");
+    }
+
+    const versionRows = await client.db
+      .select({ id: artifactVersions.id })
+      .from(artifactVersions)
+      .where(eq(artifactVersions.artifactId, artifact.id));
+    const versionIds = versionRows.map((row) => row.id);
+
+    for (const versionId of versionIds) {
+      const featureRows = await client.db
+        .select({ id: gherkinFeatures.id })
+        .from(gherkinFeatures)
+        .where(eq(gherkinFeatures.artifactVersionId, versionId));
+      for (const feature of featureRows) {
+        const scenarioRows = await client.db
+          .select({ id: gherkinScenarios.id })
+          .from(gherkinScenarios)
+          .where(eq(gherkinScenarios.featureId, feature.id));
+        for (const scenario of scenarioRows) {
+          await client.db.delete(gherkinSteps).where(eq(gherkinSteps.scenarioId, scenario.id));
+        }
+        for (const scenario of scenarioRows) {
+          await client.db.delete(gherkinScenarios).where(eq(gherkinScenarios.id, scenario.id));
+        }
+        await client.db.delete(gherkinFeatures).where(eq(gherkinFeatures.id, feature.id));
+      }
+
+      const reviewRows = await client.db.select({ id: reviews.id }).from(reviews).where(eq(reviews.artifactVersionId, versionId));
+      for (const review of reviewRows) {
+        const requestRows = await client.db
+          .select({ id: approvalRequests.id })
+          .from(approvalRequests)
+          .where(eq(approvalRequests.reviewId, review.id));
+        for (const request of requestRows) {
+          await client.db.delete(approvalDecisions).where(eq(approvalDecisions.requestId, request.id));
+        }
+        for (const request of requestRows) {
+          await client.db.delete(approvalRequests).where(eq(approvalRequests.id, request.id));
+        }
+        await client.db.delete(reviewFindings).where(eq(reviewFindings.reviewId, review.id));
+        await client.db.delete(reviews).where(eq(reviews.id, review.id));
+      }
+
+      await client.db.delete(workflowTransitions).where(eq(workflowTransitions.artifactVersionId, versionId));
+    }
+
+    await client.db
+      .delete(artifactRelationships)
+      .where(or(eq(artifactRelationships.fromArtifactId, artifact.id), eq(artifactRelationships.toArtifactId, artifact.id)));
+
+    await client.db.update(artifacts).set({ currentVersionId: null }).where(eq(artifacts.id, artifact.id));
+    await client.db.delete(artifactVersions).where(eq(artifactVersions.artifactId, artifact.id));
+    await client.db.delete(artifacts).where(eq(artifacts.id, artifact.id));
+
+    return { key: loaded.key, id: loaded.id, version: loaded.currentVersion.version };
+  });
+
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.artifact.hard_delete",
+    entityType: "artifact",
+    entityId: snapshot.id,
+    entityKey: snapshot.key,
+    version: snapshot.version,
+    after: { deleted: true, permanent: true },
+    actor: principal,
+  });
+
+  return { key: snapshot.key, deleted: true };
 }
 
 export async function createGherkin(
@@ -550,9 +756,16 @@ async function nextArtifactKey(client: DbClient, type: ArtifactType): Promise<st
   return `${prefix}-${String(value).padStart(3, "0")}`;
 }
 
-async function loadArtifact(client: DbClient, key: string): Promise<ArtifactRecord> {
+async function loadArtifact(
+  client: DbClient,
+  key: string,
+  options?: { allowDeleted?: boolean },
+): Promise<ArtifactRecord> {
   const artifact = (await client.db.select().from(artifacts).where(eq(artifacts.key, key)))[0];
   if (!artifact) {
+    throw new NotFoundError(`Artifact not found: ${key}`);
+  }
+  if (artifact.deletedAt && !options?.allowDeleted) {
     throw new NotFoundError(`Artifact not found: ${key}`);
   }
   const project = (await client.db.select().from(projects).where(eq(projects.id, artifact.projectId)))[0];
@@ -576,6 +789,7 @@ async function loadArtifact(client: DbClient, key: string): Promise<ArtifactReco
     projectKey: project.key,
     createdBy: artifact.createdBy,
     createdAt: artifact.createdAt,
+    deletedAt: artifact.deletedAt ?? null,
     currentVersion: current,
     versions,
   };
@@ -611,6 +825,7 @@ function toProject(row: typeof projects.$inferSelect): ProjectRecord {
     key: row.key,
     name: row.name,
     description: row.description,
+    techStack: row.techStack ?? "",
     createdBy: row.createdBy,
     createdAt: row.createdAt,
   };

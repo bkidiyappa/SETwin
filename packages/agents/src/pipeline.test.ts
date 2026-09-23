@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import { SDLC_STAGES, actorCanApprove, actorCanCreateStage, getStageForType } from "./pipeline.ts";
 
 describe("sdlc pipeline", () => {
-  it("orders stages story → design → code → test with approval gates", () => {
+  it("runs code and test in parallel after design (same order, both require design)", () => {
     expect(SDLC_STAGES.map((row) => row.id)).toEqual(["story", "design", "code", "test"]);
     expect(SDLC_STAGES.find((row) => row.id === "design")?.requiresApprovedStage).toBe("story");
     expect(SDLC_STAGES.find((row) => row.id === "code")?.requiresApprovedStage).toBe("design");
-    expect(SDLC_STAGES.find((row) => row.id === "test")?.requiresApprovedStage).toBe("code");
+    expect(SDLC_STAGES.find((row) => row.id === "test")?.requiresApprovedStage).toBe("design");
+    expect(SDLC_STAGES.find((row) => row.id === "code")?.order).toBe(
+      SDLC_STAGES.find((row) => row.id === "test")?.order,
+    );
   });
 
   it("maps artifact types to stages", () => {

@@ -3,6 +3,7 @@ export {
   createRequirement,
   createRequirementFromPrompt,
   createStoriesFromPrompt,
+  formatStoryBody,
   generateGherkinDraft,
   parseStoryDrafts,
   reviseRequirementFromFeedback,

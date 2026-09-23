@@ -22,10 +22,14 @@ declare module "fastify" {
 
 function bearerToken(request: FastifyRequest): string | undefined {
   const header = request.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    return undefined;
+  if (header?.startsWith("Bearer ")) {
+    return header.slice("Bearer ".length).trim();
   }
-  return header.slice("Bearer ".length).trim();
+  const query = request.query as { token?: string };
+  if (typeof query?.token === "string" && query.token.trim()) {
+    return query.token.trim();
+  }
+  return undefined;
 }
 
 export function registerIdentityRoutes(app: FastifyInstance): void {

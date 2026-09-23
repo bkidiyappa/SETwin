@@ -50,19 +50,28 @@ Defined in `packages/agents/src/pipeline.ts` (`SDLC_STAGES`):
 | Story | STORY, REQUIREMENT, FEATURE, EPIC | — | product_owner | product_owner |
 | Design | DESIGN, ARCHITECTURE | Story | architect | architect, engineering_manager |
 | Code | CODE | Design | developer | engineering_manager, security_reviewer |
-| Test | TEST, GHERKIN | Code | qa_reviewer | qa_reviewer |
+| Test | TEST, GHERKIN | Design (parallel with Code) | qa_reviewer | qa_reviewer |
 
-**Advance** (`POST /pipeline/advance`):
+**Workflow on Workspace** (prompt on top + four resizable columns):
+
+1. **Setup** — create project/product, Features, and repositories.
+2. **Prompt → Stories** — attach a Feature (required, no default) before submit → review → approve.
+3. **Story → Design** — LLM sees Feature + all sibling stories; design goes through submit/approve.
+4. **Story → Code / Tests** (after design approved) — parallel agents; Gherkin tests; each submits for approval.
+
+**Advance** (`POST /pipeline/advance` / `POST /pipeline/advance-parallel`):
 
 - Fails if the prior stage has no APPROVED artifacts.
-- Checks the actor’s role/permissions for that stage.
+- Checks the actor’s role/permissions for that stage (admin can do all). All roles can **view** every stage.
 - **Reuses** existing linked artifacts when possible; otherwise creates a DRAFT via the role skill.
 - Establishes **many-to-many** relationships, e.g.:
   - Design/Architecture `DESIGNED_BY` → Story
   - Code `IMPLEMENTS` → Story (and prior design)
-  - Test `TESTED_BY` → Story / Code
+  - Test/Gherkin `TESTED_BY` → Story / Design
 
 Humans still **Submit → Approve** each new draft. Without approval, the next stage stays blocked.
+
+Design attachments: `POST /artifacts/:key/attachments` (base64 file or reference URL) stored under `data/attachments/`.
 
 ### 5. Twin Explorer (traceability UI)
 

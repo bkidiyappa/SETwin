@@ -13,6 +13,7 @@ import { indexRepository, listRepositories, listSymbols, registerRepository } fr
 import { analyzeChange, getChangeAnalysis } from "@setwin/change";
 import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
 import {
+  advanceCodeAndTestsInParallel,
   advancePipelineStage,
   getPipelineStatus,
   getRoleSkill,
@@ -25,6 +26,7 @@ import {
   reviseArtifactFromRejection,
   saveArtifactDraft,
   submitArtifactForReview,
+  syncCodeAndTestsFromDesign,
 } from "@setwin/agents";
 import { ingestTestRun, listTestRuns, parseJunitLike } from "@setwin/testing";
 import { listPipelineAdapters, renderPipelineTemplate, type PipelineProvider } from "@setwin/cicd";
@@ -32,7 +34,7 @@ import { executeGeneratedTests, generateTestsFromArtifact, ingestOpenSecantResul
 import { listEngineeringEvents, recordEngineeringEvent, visualizationSeries } from "@setwin/openvector";
 import { listIntegrations, syncIntegrationStatus } from "@setwin/integrations";
 import { NotFoundError, requirePermission, type Principal } from "@setwin/auth";
-import { findExistingReview, listArtifacts } from "@setwin/twin";
+import { createArtifact, createArtifactVersion, findExistingReview, listArtifacts, softDeleteArtifact, permanentlyDeleteTestArtifact, getArtifact as getTwinArtifact } from "@setwin/twin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getSettings } from "@setwin/config";
 
@@ -137,10 +139,100 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
       actorOf(request),
     );
   });
-  app.post("/artifacts/:key/submit", async (request) => {
+  app.post("/artifacts/:key/submit", async (request, reply) => {
     const params = request.params as { key: string };
-    const body = (request.body as { comment?: string }) ?? {};
-    return submitArtifactForReview(getSettings().databaseUrl, params.key, actorOf(request), body.comment);
+    const body = (request.body as { comment?: string; featureKey?: string }) ?? {};
+    try {
+      return await submitArtifactForReview(getSettings().databaseUrl, params.key, actorOf(request), {
+        comment: body.comment,
+        featureKey: body.featureKey,
+      });
+    } catch (err) {
+      if (err instanceof Error && /featureKey|Feature/i.test(err.message)) {
+        return reply.code(400).send({ error: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/features", async (request) => {
+    const query = request.query as { project?: string };
+    const rows = await listArtifacts(getSettings().databaseUrl, actorOf(request), {
+      project: query.project,
+      type: "FEATURE",
+    });
+    return rows;
+  });
+
+  app.post("/features", async (request, reply) => {
+    const body = request.body as { project?: string; title?: string; content?: string };
+    if (!body?.project || !body.title?.trim()) {
+      return reply.code(400).send({ error: "project and title are required" });
+    }
+    const actor = actorOf(request);
+    if (!actor?.roles.includes("administrator")) {
+      return reply.code(403).send({ error: "Administrator role required to create features" });
+    }
+    return createArtifact(
+      getSettings().databaseUrl,
+      {
+        project: body.project,
+        type: "FEATURE",
+        title: body.title.trim(),
+        content: body.content?.trim() || body.title.trim(),
+        provenanceSource: "HUMAN_AUTHORED",
+      },
+      actor,
+    );
+  });
+
+  app.patch("/features/:key", async (request, reply) => {
+    const params = request.params as { key: string };
+    const body = request.body as { title?: string; content?: string };
+    const actor = actorOf(request);
+    if (!actor?.roles.includes("administrator")) {
+      return reply.code(403).send({ error: "Administrator role required to edit features" });
+    }
+    if (!body?.title?.trim() && body?.content === undefined) {
+      return reply.code(400).send({ error: "title or content is required" });
+    }
+    const current = await getTwinArtifact(getSettings().databaseUrl, params.key, actor);
+    if (current.type !== "FEATURE") {
+      return reply.code(400).send({ error: `${params.key} is not a FEATURE` });
+    }
+    return createArtifactVersion(
+      getSettings().databaseUrl,
+      params.key,
+      {
+        title: body.title?.trim() || current.currentVersion.title,
+        content: body.content !== undefined ? body.content : current.currentVersion.content,
+        provenanceSource: "HUMAN_AUTHORED",
+      },
+      actor,
+    );
+  });
+
+  app.delete("/features/:key", async (request, reply) => {
+    const params = request.params as { key: string };
+    const actor = actorOf(request);
+    if (!actor?.roles.includes("administrator")) {
+      return reply.code(403).send({ error: "Administrator role required to delete features" });
+    }
+    const current = await getTwinArtifact(getSettings().databaseUrl, params.key, actor);
+    if (current.type !== "FEATURE") {
+      return reply.code(400).send({ error: `${params.key} is not a FEATURE` });
+    }
+    return softDeleteArtifact(getSettings().databaseUrl, params.key, actor);
+  });
+
+  app.delete("/artifacts/:key", async (request, reply) => {
+    const params = request.params as { key: string };
+    const query = request.query as { permanent?: string };
+    const actor = actorOf(request);
+    if (query.permanent === "1" || query.permanent === "true") {
+      return permanentlyDeleteTestArtifact(getSettings().databaseUrl, params.key, actor);
+    }
+    return softDeleteArtifact(getSettings().databaseUrl, params.key, actor);
   });
   app.post("/artifacts/:key/revise-from-rejection", async (request, reply) => {
     const params = request.params as { key: string };
@@ -182,6 +274,28 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     }
     return advancePipelineStage(getSettings().databaseUrl, body as never, actorOf(request));
   });
+  app.post("/pipeline/advance-parallel", async (request, reply) => {
+    const body = request.body as {
+      project?: string;
+      sourceKeys?: string[];
+      reuseExisting?: boolean;
+    };
+    if (!body?.project) {
+      return reply.code(400).send({ error: "project is required" });
+    }
+    return advanceCodeAndTestsInParallel(getSettings().databaseUrl, body as never, actorOf(request));
+  });
+  app.post("/pipeline/code-and-tests", async (request, reply) => {
+    const body = request.body as { project?: string; designKey?: string };
+    if (!body?.project || !body.designKey) {
+      return reply.code(400).send({ error: "project and designKey are required" });
+    }
+    return syncCodeAndTestsFromDesign(
+      getSettings().databaseUrl,
+      { project: body.project, designKey: body.designKey },
+      actorOf(request),
+    );
+  });
   app.post("/pipeline/link", async (request, reply) => {
     const body = request.body as { from?: string; to?: string; type?: string };
     if (!body?.from || !body?.to || !body?.type) {
@@ -190,7 +304,10 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     return linkArtifacts(getSettings().databaseUrl, body as never, actorOf(request));
   });
 
-  app.get("/repos", async (request) => listRepositories(getSettings().databaseUrl, actorOf(request)));
+  app.get("/repos", async (request) => {
+    const query = request.query as { project?: string };
+    return listRepositories(getSettings().databaseUrl, actorOf(request), { project: query.project });
+  });
   app.post("/repos", async (request, reply) => {
     const body = request.body as { project?: string; path?: string };
     if (!body?.project || !body.path) {

@@ -92,6 +92,7 @@ export const projects = pgTable("projects", {
   key: text("key").notNull().unique(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  techStack: text("tech_stack").notNull().default(""),
   createdBy: uuid("created_by")
     .notNull()
     .references(() => users.id),
@@ -115,6 +116,7 @@ export const artifacts = pgTable("artifacts", {
     .references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   currentVersionId: uuid("current_version_id"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export const artifactVersions = pgTable(

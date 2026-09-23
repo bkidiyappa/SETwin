@@ -33,7 +33,7 @@ export const SDLC_STAGES: StageDefinition[] = [
     id: "story",
     label: "Stories / Requirements",
     order: 1,
-    artifactTypes: ["STORY", "REQUIREMENT", "FEATURE", "EPIC"],
+    artifactTypes: ["STORY", "REQUIREMENT", "EPIC"],
     requiresApprovedStage: null,
     createPermissions: ["requirement:create", "artifact:create"],
     approvePermission: "artifact:approve",
@@ -71,9 +71,10 @@ export const SDLC_STAGES: StageDefinition[] = [
   {
     id: "test",
     label: "Tests",
-    order: 4,
+    order: 3,
     artifactTypes: ["TEST", "GHERKIN"],
-    requiresApprovedStage: "code",
+    /** Parallel with code — both unlock after Design is APPROVED. */
+    requiresApprovedStage: "design",
     createPermissions: ["test:create", "artifact:create"],
     approvePermission: "artifact:approve",
     createRoles: ["qa_reviewer", "administrator"],
@@ -382,4 +383,36 @@ async function ensureRelationship(
   } catch {
     return null;
   }
+}
+
+/**
+ * After Design is APPROVED, kick off Code and Tests in parallel (both require design).
+ * Each leg is independent — lack of permission on one side does not block the other.
+ */
+export async function advanceCodeAndTestsInParallel(
+  databaseUrl: string,
+  input: { project: string; sourceKeys?: string[]; reuseExisting?: boolean },
+  actor?: Principal,
+): Promise<{
+  code: Awaited<ReturnType<typeof advancePipelineStage>> | { error: string };
+  tests: Awaited<ReturnType<typeof advancePipelineStage>> | { error: string };
+}> {
+  const run = async (targetStage: "code" | "test") => {
+    try {
+      return await advancePipelineStage(
+        databaseUrl,
+        {
+          project: input.project,
+          targetStage,
+          sourceKeys: input.sourceKeys,
+          reuseExisting: input.reuseExisting,
+        },
+        actor,
+      );
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+  const [code, tests] = await Promise.all([run("code"), run("test")]);
+  return { code, tests };
 }

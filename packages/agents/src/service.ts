@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { desc, eq } from "drizzle-orm";
-import { completeViaGateway } from "@setwin/ai";
+import { completeViaGateway, requireAiCompletion } from "@setwin/ai";
 import { recordAuditEvent } from "@setwin/audit";
 import { NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import { agentProposals, codingAgentRuns, projects, withDatabase } from "@setwin/database";
@@ -35,19 +35,19 @@ export async function proposeAsRole(
   }
   const skill = getRoleSkill(role);
   const taskId = input.task ?? skill.tasks[0]?.id;
-  const ai = await completeViaGateway(
-    databaseUrl,
-    {
-      task: "agent.propose",
-      system: buildRoleSystemPrompt(role, taskId),
-      prompt: `Project ${input.project}. Topic: ${input.topic}`,
-    },
-    principal,
+  const ai = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      {
+        task: "agent.propose",
+        system: buildRoleSystemPrompt(role, taskId),
+        prompt: `Project ${input.project}. Topic: ${input.topic}`,
+      },
+      principal,
+    ),
+    "agent.propose",
   );
-  const content =
-    ai.status === "ok" && ai.text.trim()
-      ? ai.text.trim()
-      : deterministicProposal(role, input.topic);
+  const content = ai.text.trim();
   const title = `${role} proposal: ${input.topic}`.slice(0, 120);
   let artifactKey: string | null = null;
   try {
@@ -213,20 +213,4 @@ export async function invokeCodingAgent(
     actor: principal,
   });
   return { id: row.id, agent, status: row.status, output: row.output, error: row.error };
-}
-
-function deterministicProposal(role: ScrumRole, topic: string): string {
-  return [
-    `# ${role} draft proposal`,
-    "",
-    `Topic: ${topic}`,
-    "",
-    "This DRAFT was produced without a live model response.",
-    "It must be reviewed and approved by a human before becoming authoritative.",
-    "",
-    "## Suggested next steps",
-    "- Clarify acceptance criteria",
-    "- Link related artifacts in SETwin",
-    "- Submit for workflow review",
-  ].join("\n");
 }

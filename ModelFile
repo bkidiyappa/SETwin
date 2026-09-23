@@ -1,0 +1,2 @@
+FROM freehuntx/qwen3-coder:8b
+PARAMETER num_ctx 8192

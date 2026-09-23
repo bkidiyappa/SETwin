@@ -7,6 +7,7 @@ type AiAction = {
   model: string;
   task: string;
   status: string;
+  error?: string;
   createdAt: string;
 };
 
@@ -33,6 +34,7 @@ export function AiActivityPage() {
               <th>Model</th>
               <th>Task</th>
               <th>Status</th>
+              <th>Error</th>
               <th>When</th>
             </tr>
           </thead>
@@ -42,7 +44,10 @@ export function AiActivityPage() {
                 <td>{row.provider}</td>
                 <td>{row.model}</td>
                 <td>{row.task}</td>
-                <td>{row.status}</td>
+                <td className={row.status !== "ok" ? "error" : undefined}>{row.status}</td>
+                <td className={row.error ? "error" : "muted"} title={row.error || undefined}>
+                  {row.error || "—"}
+                </td>
                 <td>{new Date(row.createdAt).toLocaleString()}</td>
               </tr>
             ))}

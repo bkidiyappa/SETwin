@@ -9,6 +9,7 @@ export {
   type AiProviderName,
   type GatewayOptions,
 } from "./gateway.ts";
+export { requireAiCompletion, type AiCompletionOk } from "./require.ts";
 export {
   createAnthropicProvider,
   createAzureProvider,

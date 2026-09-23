@@ -103,15 +103,19 @@ pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass
 ```
 
-Then create a project (Repositories page or CLI), optionally register a repo, and use Workspace → Approve → Advance → Twin Explorer.
+Then create a project/feature on **Setup** (or CLI), optionally register a repo, and use Workspace → Approve → Advance → Twin Explorer.
 
 ### Web UI sign-in
 
 1. Open `http://localhost:5173` (Dashboard) with API (`pnpm dev`) and Web (`pnpm web`) running.
 2. Enter username/password → **Log in** (or paste `stw_…` from `data/session.json` under Advanced).
-3. Open **Workspace** (`/workspace`) for: Prompt → editable Stories → **Submit → Approve** → Advance stages.
-   - Without approval, the next SDLC stage is blocked (Story → Design → Code → Tests).
-   - **Twin Explorer** (`/twin`): product filter, full node graph (zoom in for titles/details, Expand/Collapse modal), and three searchable cards (Requirements / Code / Tests). Click a node to refresh all cards with connected artifacts only.
+3. Open **Workspace** (`/workspace`) for the gated workflow:
+   - Prompt on top; four columns: Stories · Design · Code · Tests (drag column edges to resize).
+   - Create Features on **Setup**; attach a Feature to each story before submit (no default).
+   - Story-level **→ Design / → Code / → Tests**; LLM context includes the full Feature + all sibling stories.
+   - Activity opens from the header clock icon (modal).
+   - Left nav is collapsible with icons.
+4. **Twin Explorer** (`/twin`): product filter, full node graph (zoom in for titles/details, Expand/Collapse modal), and three searchable cards (Requirements / Code / Tests). Click a node to refresh all cards with connected artifacts only.
    - Role skills are markdown under `packages/agents/skills/*.md`. List with `pnpm setwin -- agent skills`.
 4. Twin Explorer / Repositories need the same session.
 
@@ -159,7 +163,7 @@ pnpm setwin -- requirement create "Customers can cancel an unpaid order within 3
 pnpm setwin -- requirement show REQ-001
 ```
 
-Artifact keys are typed (`REQ-001`, `GHK-001`, …). Version 1 starts as `DRAFT`.
+Artifact keys are typed (`REQ-001`, `TST-001`, …). Version 1 starts as `DRAFT`.
 
 ### 5.3 Generate Gherkin (always DRAFT)
 
@@ -167,7 +171,7 @@ With Ollama (or another configured provider):
 
 ```bash
 pnpm setwin -- requirement gherkin REQ-001
-pnpm setwin -- gherkin show GHK-001
+pnpm setwin -- gherkin show TST-001
 ```
 
 AI output is validated and stored as **DRAFT**. It is never auto-approved.
@@ -246,7 +250,7 @@ Approved versions are never rewritten in place. A new version is always a fresh 
 ### Relationships
 
 ```bash
-pnpm setwin -- relate GHK-001 VALIDATES REQ-001
+pnpm setwin -- relate TST-001 VALIDATES REQ-001
 pnpm setwin -- artifact relations REQ-001
 ```
 
@@ -337,7 +341,7 @@ SETwin is **not** a replacement for Git. Your product repo stays the source of c
 ```text
 Your product git clone  --register/index-->  SETwin twin (Postgres)
         |                                         |
-     source code                           REQ / GHK / reviews
+     source code                           REQ / TST / reviews
      tests / features                      approvals / audit
 ```
 
@@ -400,6 +404,18 @@ Configure providers in `.env` (see `.env.example`). Ollama-first:
 # SETWIN_OLLAMA_BASE_URL=http://127.0.0.1:11434
 # SETWIN_OLLAMA_MODEL=qwen2.5:7b
 ```
+
+To append each LLM request and response, with start, finish, and duration, to a readable file (off by default):
+
+```bash
+SETWIN_LLM_LOG_REQUESTS=true
+# Default path is data/llm.log
+# SETWIN_LLM_LOG_FILE=./data/llm.log
+# Optional truncate length (default 16000; 0 = no truncate)
+# SETWIN_LLM_LOG_MAX_CHARS=16000
+```
+
+Restart the API after changing these. Each exchange is a plain-text block in that file. The API log also records `llm.log` with `durationMs`.
 
 ```bash
 pnpm setwin -- ai complete --prompt "Summarize cancel-order acceptance criteria"

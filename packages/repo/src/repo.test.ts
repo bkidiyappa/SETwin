@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFile } from "./index.ts";
+import { parseFile, unifiedDiffForFile } from "./index.ts";
 
 describe("repository intelligence", () => {
   it("parses typescript functions and classes", async () => {
@@ -9,8 +9,6 @@ export class Greeter {
   greet() { return "hi"; }
 }
 `;
-    const parsed = parseFile.toString().includes("parseFile");
-    expect(parsed).toBe(true);
     const { writeFile, mkdtemp, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -24,5 +22,14 @@ export class Greeter {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("builds unified diffs for add and modify", () => {
+    const added = unifiedDiffForFile("src/a.ts", null, "export const a = 1;\n");
+    expect(added).toContain("new file mode");
+    expect(added).toContain("+export const a = 1;");
+    const modified = unifiedDiffForFile("src/a.ts", "export const a = 1;\n", "export const a = 2;\n");
+    expect(modified).toContain("-export const a = 1;");
+    expect(modified).toContain("+export const a = 2;");
   });
 });

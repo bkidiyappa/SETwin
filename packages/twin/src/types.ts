@@ -25,7 +25,7 @@ export const ARTIFACT_PREFIX: Record<ArtifactType, string> = {
   CODE: "COD",
   TEST: "TST",
   COMPONENT: "CMP",
-  GHERKIN: "GHK",
+  GHERKIN: "TST",
 };
 
 export const VERSION_STATUSES = ["DRAFT", "SUPERSEDED", "APPROVED"] as const;
@@ -84,6 +84,7 @@ export type ProjectRecord = {
   key: string;
   name: string;
   description: string;
+  techStack: string;
   createdBy: string;
   createdAt: Date;
 };
@@ -114,6 +115,7 @@ export type ArtifactRecord = {
   projectKey: string;
   createdBy: string;
   createdAt: Date;
+  deletedAt?: Date | null;
   currentVersion: ArtifactVersionRecord;
   versions: ArtifactVersionRecord[];
 };

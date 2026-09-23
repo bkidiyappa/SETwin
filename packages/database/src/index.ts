@@ -175,6 +175,7 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
         key text NOT NULL UNIQUE,
         name text NOT NULL,
         description text NOT NULL DEFAULT '',
+        tech_stack text NOT NULL DEFAULT '',
         created_by uuid NOT NULL REFERENCES users(id),
         created_at timestamptz NOT NULL
       )
@@ -257,6 +258,35 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
     await client.sql`
       ALTER TABLE artifact_versions
       ADD COLUMN IF NOT EXISTS workflow_state text NOT NULL DEFAULT 'DRAFT'
+    `;
+    await client.sql`
+      ALTER TABLE artifacts
+      ADD COLUMN IF NOT EXISTS deleted_at timestamptz
+    `;
+    await client.sql`
+      ALTER TABLE projects
+      ADD COLUMN IF NOT EXISTS tech_stack text NOT NULL DEFAULT ''
+    `;
+    // Legacy GHK-* test keys → TST-* when free; otherwise allocate next TST-n
+    await client.sql`
+      WITH renamed AS (
+        SELECT a.id,
+          CASE
+            WHEN NOT EXISTS (
+              SELECT 1 FROM artifacts x WHERE x.key = regexp_replace(a.key, '^GHK-', 'TST-')
+            ) THEN regexp_replace(a.key, '^GHK-', 'TST-')
+            ELSE NULL
+          END AS new_key
+        FROM artifacts a
+        WHERE a.key ~ '^GHK-[0-9]+$'
+      )
+      UPDATE artifacts AS a
+      SET key = r.new_key
+      FROM renamed r
+      WHERE a.id = r.id AND r.new_key IS NOT NULL
+    `;
+    await client.sql`
+      DELETE FROM artifact_key_counters WHERE prefix = 'GHK'
     `;
     await client.sql`
       CREATE TABLE IF NOT EXISTS workflow_policies (

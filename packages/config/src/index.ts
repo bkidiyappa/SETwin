@@ -15,6 +15,12 @@ const settingsSchema = z.object({
   apiPort: z.coerce.number().default(8000),
   dataDir: z.string().default("data"),
   workspaceDir: z.string().default("workspace"),
+  /** When true, append LLM request/response to the LLM log file. */
+  llmLogRequests: z.boolean().default(false),
+  /** Truncate logged prompt/response bodies to this many characters (0 = no truncate). */
+  llmLogMaxChars: z.coerce.number().int().min(0).default(16_000),
+  /** Relative or absolute path for the readable LLM log. Empty uses data/llm.log. */
+  llmLogFile: z.string().default(""),
 });
 
 export type Settings = z.infer<typeof settingsSchema> & {
@@ -68,6 +74,13 @@ export function redactDatabaseUrl(url: string): string {
   return `${scheme}${username}:***@${hostinfo}`;
 }
 
+export function parseEnvFlag(value: string | undefined, defaultValue = false): boolean {
+  if (value === undefined || value.trim() === "") {
+    return defaultValue;
+  }
+  return /^(1|true|yes|on)$/i.test(value.trim());
+}
+
 export function createSettings(overrides: Partial<{
   env: string;
   logLevel: string;
@@ -76,6 +89,9 @@ export function createSettings(overrides: Partial<{
   apiPort: number;
   dataDir: string;
   workspaceDir: string;
+  llmLogRequests: boolean;
+  llmLogMaxChars: number;
+  llmLogFile: string;
 }> = {}): Settings {
   const parsed = settingsSchema.parse({
     env: overrides.env ?? process.env.SETWIN_ENV ?? "development",
@@ -88,6 +104,14 @@ export function createSettings(overrides: Partial<{
     apiPort: overrides.apiPort ?? process.env.SETWIN_API_PORT ?? 8000,
     dataDir: overrides.dataDir ?? process.env.SETWIN_DATA_DIR ?? "data",
     workspaceDir: overrides.workspaceDir ?? process.env.SETWIN_WORKSPACE_DIR ?? "workspace",
+    llmLogRequests:
+      overrides.llmLogRequests ?? parseEnvFlag(process.env.SETWIN_LLM_LOG_REQUESTS, false),
+    llmLogMaxChars:
+      overrides.llmLogMaxChars ??
+      (process.env.SETWIN_LLM_LOG_MAX_CHARS !== undefined && process.env.SETWIN_LLM_LOG_MAX_CHARS !== ""
+        ? Number(process.env.SETWIN_LLM_LOG_MAX_CHARS)
+        : 16_000),
+    llmLogFile: overrides.llmLogFile ?? process.env.SETWIN_LLM_LOG_FILE ?? "",
   });
   const databaseUrl = normalizeDatabaseUrl(parsed.databaseUrl);
   return {

@@ -25,10 +25,11 @@ export function parseGherkin(source: string): ParsedGherkinFeature {
 
   const scenarios: ParsedGherkinScenario[] = [];
   collectScenarios(feature.children ?? [], scenarios);
-  if (scenarios.length === 0) {
+  const realScenarios = scenarios.filter((row) => !/background/i.test(row.keyword));
+  if (realScenarios.length === 0) {
     throw new ValidationError("Gherkin Feature must contain at least one Scenario.");
   }
-  for (const scenario of scenarios) {
+  for (const scenario of realScenarios) {
     if (scenario.steps.length === 0) {
       throw new ValidationError(`Scenario "${scenario.name}" must contain at least one step.`);
     }

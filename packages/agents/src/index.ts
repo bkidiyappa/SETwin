@@ -23,15 +23,21 @@ export {
 } from "./skills.ts";
 export {
   proposeFollowOnArtifacts,
+  formatCodeChangeArtifact,
+  parseCodeChangeArtifact,
+  resolveFeatureBundle,
   reviseArtifactFromRejection,
   saveArtifactDraft,
+  splitGherkinScenarios,
   submitArtifactForReview,
+  syncCodeAndTestsFromDesign,
   type FollowOnKind,
 } from "./lifecycle.ts";
 export {
   SDLC_STAGES,
   actorCanApprove,
   actorCanCreateStage,
+  advanceCodeAndTestsInParallel,
   advancePipelineStage,
   getPipelineStatus,
   getStageForType,

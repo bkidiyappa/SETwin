@@ -192,6 +192,9 @@ importers:
       '@setwin/database':
         specifier: workspace:*
         version: link:../database
+      '@setwin/repo':
+        specifier: workspace:*
+        version: link:../repo
       '@setwin/twin':
         specifier: workspace:*
         version: link:../twin

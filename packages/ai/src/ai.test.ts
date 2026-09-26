@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createOllamaProvider, requireAiCompletion, routeProviders } from "./index.ts";
+import { createOllamaProvider, extractJsonObject, requireAiCompletion, routeProviders, stripModelReasoning } from "./index.ts";
 import { formatDuration, formatLlmExchange } from "./llm-log.ts";
 
 describe("ai gateway", () => {
@@ -52,5 +52,18 @@ describe("ai gateway", () => {
     expect(text).toContain("Duration:    12.500 s (12500 ms)");
     expect(text).toContain("Request\nSplit this");
     expect(text).toContain("Response\nFeature: Cancel");
+  });
+
+  it("strips think blocks and repairs a broken JSON key", () => {
+    const raw = `<think>planning</think>\n{\n  "title": "RBAC",\n  " "path": "src/a.ts"\n}`;
+    expect(stripModelReasoning(raw).startsWith("{")).toBe(true);
+    const json = extractJsonObject(raw);
+    expect(json).toBeTruthy();
+    expect(JSON.parse(json!).path).toBe("src/a.ts");
+    const completion = requireAiCompletion(
+      { provider: "ollama", model: "qwen3", text: "<think>x</think>\nFeature: Roles", status: "ok" },
+      "artifact.tests",
+    );
+    expect(completion.text.startsWith("Feature:")).toBe(true);
   });
 });

@@ -225,6 +225,8 @@ export function WorkspacePage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
   const [expandedPane, setExpandedPane] = useState<"prompt" | "story" | "design" | "code" | "test" | null>(null);
+  const [selectedTestKeys, setSelectedTestKeys] = useState<Set<string>>(new Set());
+  const [bulkRejectReason, setBulkRejectReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const logEndRef = useRef<HTMLDivElement | null>(null);
@@ -678,6 +680,143 @@ export function WorkspacePage() {
     }
   }
 
+  async function submitSelectedTests(): Promise<void> {
+    if (!canEditStage("test", session)) {
+      setError("Your role cannot submit test artifacts.");
+      return;
+    }
+    const rows = filteredTests.filter(
+      (row) => selectedTestKeys.has(row.key) && row.currentVersion.workflowState === "DRAFT",
+    );
+    if (!rows.length) {
+      setError("Select draft tests to submit.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const failed: string[] = [];
+    let submitted = 0;
+    for (const row of rows) {
+      try {
+        const updated = await apiPost<ArtifactCard>(`/artifacts/${row.key}/submit`, {
+          comment: "Submitted from Workspace",
+        });
+        upsertSorted(setTests, [toCard(updated)]);
+        submitted += 1;
+        pushLog(`${row.key} submitted → ${updated.currentVersion.workflowState}`, "ok");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failed.push(`${row.key}: ${message}`);
+        pushLog(`${row.key}: ${message}`, "error");
+      }
+    }
+    setSelectedTestKeys(new Set());
+    if (failed.length) {
+      setError(`Submitted ${submitted}. Failed ${failed.length}: ${failed[0]}`);
+    }
+    await refreshAudit();
+    if (project) {
+      await loadPipeline(project);
+    }
+    setBusy(false);
+  }
+
+  async function rejectSelectedTests(): Promise<void> {
+    const reason = bulkRejectReason.trim();
+    if (!reason) {
+      setError("Enter a reason to reject the selected tests.");
+      return;
+    }
+    const rows = filteredTests.filter(
+      (row) => selectedTestKeys.has(row.key) && row.currentVersion.workflowState === "IN_REVIEW",
+    );
+    if (!rows.length) {
+      setError("Select tests that are in review to reject.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    const failed: string[] = [];
+    let rejected = 0;
+    for (const row of rows) {
+      try {
+        await apiPost(`/artifacts/${row.key}/review/decide`, {
+          decision: "REJECT",
+          comment: reason,
+        });
+        const updated = await apiGet<ArtifactCard>(`/artifacts/${row.key}`);
+        upsertSorted(setTests, [toCard({ ...updated, decisionReason: reason })]);
+        rejected += 1;
+        pushLog(`${row.key} decision REJECT`, "ok");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failed.push(`${row.key}: ${message}`);
+        pushLog(`${row.key}: ${message}`, "error");
+      }
+    }
+    setSelectedTestKeys(new Set());
+    if (failed.length) {
+      setError(`Rejected ${rejected}. Failed ${failed.length}: ${failed[0]}`);
+    }
+    await refreshAudit();
+    if (project) {
+      await loadPipeline(project);
+    }
+    setBusy(false);
+  }
+
+  function renderTestBulkBar() {
+    if (filteredTests.length <= 5) {
+      return null;
+    }
+    const selectedCount = filteredTests.filter((row) => selectedTestKeys.has(row.key)).length;
+    const allSelected = filteredTests.length > 0 && selectedCount === filteredTests.length;
+    const selectedDrafts = filteredTests.filter(
+      (row) => selectedTestKeys.has(row.key) && row.currentVersion.workflowState === "DRAFT",
+    ).length;
+    const selectedInReview = filteredTests.filter(
+      (row) => selectedTestKeys.has(row.key) && row.currentVersion.workflowState === "IN_REVIEW",
+    ).length;
+    return (
+      <>
+        <label className="test-select">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            disabled={busy || filteredTests.length === 0}
+            onChange={() =>
+              setSelectedTestKeys(allSelected ? new Set() : new Set(filteredTests.map((row) => row.key)))
+            }
+          />
+          <span>
+            Select all ({selectedCount}/{filteredTests.length})
+          </span>
+        </label>
+        <button
+          type="button"
+          disabled={busy || selectedDrafts === 0 || !canEditStage("test", session)}
+          onClick={() => void submitSelectedTests()}
+        >
+          Submit selected
+        </button>
+        <button
+          type="button"
+          disabled={busy || selectedInReview === 0 || !canApprove(session)}
+          onClick={() => void rejectSelectedTests()}
+        >
+          Reject selected
+        </button>
+        <input
+          className="test-bulk-reason"
+          value={bulkRejectReason}
+          disabled={busy}
+          placeholder="Reject reason…"
+          onChange={(event) => setBulkRejectReason(event.target.value)}
+        />
+      </>
+    );
+  }
+
   async function decideCard(
     row: ArtifactCard,
     decision: "APPROVE" | "REJECT" | "CHANGES_REQUESTED",
@@ -1044,6 +1183,26 @@ export function WorkspacePage() {
     return (
       <article key={`${row.key}-v${row.currentVersion.version}-${state}`} className="workspace-card">
         <div className="workspace-card-meta">
+          {stage === "test" && filteredTests.length > 5 ? (
+            <label className="test-select">
+              <input
+                type="checkbox"
+                checked={selectedTestKeys.has(row.key)}
+                disabled={busy}
+                onChange={() =>
+                  setSelectedTestKeys((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(row.key)) {
+                      next.delete(row.key);
+                    } else {
+                      next.add(row.key);
+                    }
+                    return next;
+                  })
+                }
+              />
+            </label>
+          ) : null}
           <strong>
             {row.key} · {row.type === "GHERKIN" ? "TEST" : row.type}
           </strong>
@@ -1503,6 +1662,7 @@ export function WorkspacePage() {
             >
               + Add test
             </button>
+            {renderTestBulkBar()}
           </div>
           <div className="workspace-scroll">
             {filteredTests.length === 0 ? (
@@ -1533,9 +1693,23 @@ export function WorkspacePage() {
                         ? "Code"
                         : "Tests"}
               </h2>
-              <button type="button" onClick={() => setExpandedPane(null)}>
-                Collapse
-              </button>
+              <div className="workspace-col-head-actions">
+                {expandedPane === "test" ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy || !project || !canEditStage("test", session)}
+                      onClick={() => void addTestScenario()}
+                    >
+                      + Add test
+                    </button>
+                    {renderTestBulkBar()}
+                  </>
+                ) : null}
+                <button type="button" onClick={() => setExpandedPane(null)}>
+                  Collapse
+                </button>
+              </div>
             </div>
             <div className="workspace-pane-modal-body">
               {expandedPane === "prompt" ? (
@@ -1579,15 +1753,6 @@ export function WorkspacePage() {
               ) : null}
               {expandedPane === "test" ? (
                 <div className="workspace-scroll">
-                  <div className="toolbar">
-                    <button
-                      type="button"
-                      disabled={busy || !project || !canEditStage("test", session)}
-                      onClick={() => void addTestScenario()}
-                    >
-                      + Add test
-                    </button>
-                  </div>
                   {filteredTests.map((row) => renderArtifactCard(row, "test"))}
                   {filteredTests.length === 0 ? <p className="muted">No tests match.</p> : null}
                 </div>

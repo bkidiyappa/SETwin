@@ -1,4 +1,4 @@
-﻿import { completeViaGateway, requireAiCompletion } from "@setwin/ai";
+﻿import { completeViaGateway, extractJsonObject, requireAiCompletion, stripModelReasoning } from "@setwin/ai";
 import { recordAuditEvent } from "@setwin/audit";
 import { ValidationError, type Principal } from "@setwin/auth";
 import {
@@ -190,24 +190,25 @@ function formatBundleContext(bundle: {
   stories: ArtifactRecord[];
   seeds: ArtifactRecord[];
 }): string {
+  const body = (text: string) => stripModelReasoning(text);
   const parts: string[] = [];
   if (bundle.feature) {
     parts.push(
-      `## Feature ${bundle.feature.key}: ${bundle.feature.currentVersion.title}\n${bundle.feature.currentVersion.content}`,
+      `## Feature ${bundle.feature.key}: ${body(bundle.feature.currentVersion.title)}\n${body(bundle.feature.currentVersion.content)}`,
     );
   }
   if (bundle.stories.length) {
     parts.push("## Stories in this feature");
     for (const story of bundle.stories) {
       parts.push(
-        `### ${story.key} (${story.currentVersion.workflowState}) ${story.currentVersion.title}\n${story.currentVersion.content}`,
+        `### ${story.key} (${story.currentVersion.workflowState}) ${body(story.currentVersion.title)}\n${body(story.currentVersion.content)}`,
       );
     }
   }
   parts.push("## Primary source artifacts (advance trigger)");
   for (const seed of bundle.seeds) {
     parts.push(
-      `### ${seed.key} (${seed.type}) ${seed.currentVersion.title}\n${seed.currentVersion.content}`,
+      `### ${seed.key} (${seed.type}) ${body(seed.currentVersion.title)}\n${body(seed.currentVersion.content)}`,
     );
   }
   return parts.join("\n\n");
@@ -503,15 +504,12 @@ type CodeProposalJson = {
 };
 
 function parseCodeProposal(aiText: string): CodeProposalJson | null {
-  const fenced = aiText.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const raw = (fenced?.[1] ?? aiText).trim();
-  const start = raw.indexOf("{");
-  const end = raw.lastIndexOf("}");
-  if (start < 0 || end <= start) {
+  const raw = extractJsonObject(aiText);
+  if (!raw) {
     return null;
   }
   try {
-    return JSON.parse(raw.slice(start, end + 1)) as CodeProposalJson;
+    return JSON.parse(raw) as CodeProposalJson;
   } catch {
     return null;
   }
@@ -1104,6 +1102,10 @@ async function proposeOrUpdateGherkin(
   const gherkinFence = text.match(/```(?:gherkin)?\s*([\s\S]*?)```/i);
   if (gherkinFence) {
     text = gherkinFence[1].trim();
+  }
+  const featureAt = text.search(/^\s*Feature\s*:/im);
+  if (featureAt > 0) {
+    text = text.slice(featureAt).trim();
   }
   const featureTitle = input.sources[0]?.currentVersion.title ?? "Acceptance";
   if (text && !/^Feature:/im.test(text)) {

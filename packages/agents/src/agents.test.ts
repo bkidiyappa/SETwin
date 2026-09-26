@@ -62,4 +62,12 @@ describe("agents", () => {
       expect((doc.content.match(/^\s*Scenario:/gim) ?? []).length).toBe(1);
     }
   });
+
+  it("parses Gherkin that follows a think block once the Feature line is kept", () => {
+    const raw = `<think>drafting scenarios</think>\nFeature: Define User Roles and Permissions\n\n  Scenario: Admin can create a new role\n    Given a user is logged in as an admin\n    When the admin creates a role named "Editor"\n    Then the role is stored`;
+    const featureAt = raw.search(/^\s*Feature\s*:/im);
+    const docs = splitGherkinScenarios(raw.slice(featureAt));
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.title).toBe("Admin can create a new role");
+  });
 });

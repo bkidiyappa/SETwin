@@ -4,6 +4,27 @@ import type { AiCompletionResult } from "./types.ts";
 
 export type AiCompletionOk = AiCompletionResult & { status: "ok"; text: string };
 
+/** Drop qwen-style reasoning blocks so artifact parsers see only the answer. */
+export function stripModelReasoning(text: string): string {
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/i, "")
+    .trim();
+}
+
+/** Pull a JSON object out of a model reply, including light key typos like `" "path"`. */
+export function extractJsonObject(text: string): string | null {
+  const cleaned = stripModelReasoning(text);
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fenced?.[1] ?? cleaned).replace(/"\s+"([A-Za-z_][A-Za-z0-9_]*)"\s*:/g, '"$1":');
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+  return raw.slice(start, end + 1);
+}
+
 /**
  * Ensures the gateway returned a usable completion. Throws ValidationError when the
  * model is unavailable / errored / empty so callers do not fall back to generic stubs.
@@ -12,8 +33,9 @@ export function requireAiCompletion(
   result: AiCompletionResult & { actionId?: string },
   context: string,
 ): AiCompletionOk {
-  if (result.status === "ok" && result.text.trim()) {
-    return result as AiCompletionOk;
+  const text = result.status === "ok" ? stripModelReasoning(result.text) : "";
+  if (text) {
+    return { ...result, text, status: "ok" };
   }
   const detail =
     result.error?.trim() ||

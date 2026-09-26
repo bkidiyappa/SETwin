@@ -743,10 +743,21 @@ type DbClient = Parameters<Parameters<typeof withDatabase>[1]>[0];
 
 async function nextArtifactKey(client: DbClient, type: ArtifactType): Promise<string> {
   const prefix = ARTIFACT_PREFIX[type];
+  // Keep the counter ahead of keys already stored (including renamed GHK → TST rows).
   const rows = await client.sql<{ last_value: number }[]>`
     INSERT INTO artifact_key_counters (prefix, last_value)
-    VALUES (${prefix}, 1)
-    ON CONFLICT (prefix) DO UPDATE SET last_value = artifact_key_counters.last_value + 1
+    SELECT ${prefix}, COALESCE(MAX(CAST(substring(key FROM '[0-9]+$') AS integer)), 0) + 1
+    FROM artifacts
+    WHERE key ~ ('^' || ${prefix} || '-[0-9]+$')
+    ON CONFLICT (prefix) DO UPDATE
+    SET last_value = GREATEST(
+      artifact_key_counters.last_value + 1,
+      (
+        SELECT COALESCE(MAX(CAST(substring(a.key FROM '[0-9]+$') AS integer)), 0) + 1
+        FROM artifacts a
+        WHERE a.key ~ ('^' || ${prefix} || '-[0-9]+$')
+      )
+    )
     RETURNING last_value
   `;
   const value = rows[0]?.last_value;

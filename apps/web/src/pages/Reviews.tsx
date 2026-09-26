@@ -51,6 +51,8 @@ export function ReviewsPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
+  const [selectedTestKeys, setSelectedTestKeys] = useState<Set<string>>(new Set());
+  const [bulkComment, setBulkComment] = useState("");
   const [filter, setFilter] = useState<"open" | "all">("open");
   const resizeRef = useRef<{ key: string; startY: number; startH: number } | null>(null);
 
@@ -141,6 +143,47 @@ export function ReviewsPage() {
     }
   }
 
+  function isTestReview(row: Row): boolean {
+    const type = row.artifact?.type ?? "";
+    return type === "TEST" || type === "GHERKIN";
+  }
+
+  async function decideSelected(decision: "APPROVE" | "REJECT"): Promise<void> {
+    const chosen = visible.filter(
+      (row) =>
+        selectedTestKeys.has(row.artifactKey) &&
+        isTestReview(row) &&
+        row.artifact?.currentVersion.workflowState === "IN_REVIEW",
+    );
+    if (!chosen.length) {
+      setError("Select tests that are in review.");
+      return;
+    }
+    if (decision === "REJECT" && !bulkComment.trim()) {
+      setError("Enter a reason to reject the selected tests.");
+      return;
+    }
+    setBusyKey("*");
+    setError("");
+    const failed: string[] = [];
+    for (const row of chosen) {
+      try {
+        await apiPost(`/artifacts/${row.artifactKey}/review/decide`, {
+          decision,
+          comment: bulkComment.trim() || "Approved from Reviews page",
+        });
+      } catch (err) {
+        failed.push(`${row.artifactKey}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    setSelectedTestKeys(new Set());
+    if (failed.length) {
+      setError(failed[0] ?? "Some tests were not updated.");
+    }
+    await load();
+    setBusyKey("");
+  }
+
   async function revise(row: Row, resubmit: boolean): Promise<void> {
     if (!row.comment.trim()) {
       setError("Enter the rejection / change reason for the agent to address.");
@@ -187,6 +230,51 @@ export function ReviewsPage() {
           Refresh
         </button>
       </div>
+      {(() => {
+        const reviewTests = visible.filter(
+          (row) => isTestReview(row) && row.artifact?.currentVersion.workflowState === "IN_REVIEW",
+        );
+        if (visible.filter(isTestReview).length <= 5) {
+          return null;
+        }
+        const selectedCount = reviewTests.filter((row) => selectedTestKeys.has(row.artifactKey)).length;
+        const allSelected = reviewTests.length > 0 && selectedCount === reviewTests.length;
+        return (
+          <div className="panel test-bulk-bar" style={{ marginBottom: "1rem" }}>
+            <div className="toolbar">
+              <label className="test-select">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  disabled={Boolean(busyKey) || reviewTests.length === 0}
+                  onChange={() =>
+                    setSelectedTestKeys(
+                      allSelected ? new Set() : new Set(reviewTests.map((row) => row.artifactKey)),
+                    )
+                  }
+                />
+                <span>
+                  Select tests in review ({selectedCount}/{reviewTests.length})
+                </span>
+              </label>
+              <button type="button" disabled={Boolean(busyKey) || selectedCount === 0} onClick={() => void decideSelected("APPROVE")}>
+                Accept selected
+              </button>
+              <button type="button" disabled={Boolean(busyKey) || selectedCount === 0} onClick={() => void decideSelected("REJECT")}>
+                Reject selected
+              </button>
+            </div>
+            <textarea
+              className="workspace-prompt"
+              style={{ minHeight: "3rem", width: "100%", marginTop: "0.4rem" }}
+              value={bulkComment}
+              disabled={Boolean(busyKey)}
+              placeholder="Reason required when rejecting selected tests…"
+              onChange={(event) => setBulkComment(event.target.value)}
+            />
+          </div>
+        );
+      })()}
       {visible.length === 0 ? (
         <div className="panel">
           <p className="muted">
@@ -198,10 +286,32 @@ export function ReviewsPage() {
           const state = row.artifact?.currentVersion.workflowState ?? "—";
           const inReview = state === "IN_REVIEW";
           const needsRevise = state === "REJECTED" || state === "CHANGES_REQUESTED";
-          const busy = busyKey === row.artifactKey;
+          const busy = busyKey === row.artifactKey || busyKey === "*";
           return (
             <div key={row.artifactKey} className="panel review-item" style={{ marginBottom: "1rem" }}>
               <div className="review-item-head">
+                {visible.filter(isTestReview).length > 5 &&
+                isTestReview(row) &&
+                row.artifact?.currentVersion.workflowState === "IN_REVIEW" ? (
+                  <label className="test-select">
+                    <input
+                      type="checkbox"
+                      checked={selectedTestKeys.has(row.artifactKey)}
+                      disabled={Boolean(busyKey)}
+                      onChange={() =>
+                        setSelectedTestKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(row.artifactKey)) {
+                            next.delete(row.artifactKey);
+                          } else {
+                            next.add(row.artifactKey);
+                          }
+                          return next;
+                        })
+                      }
+                    />
+                  </label>
+                ) : null}
                 <button
                   type="button"
                   className="workspace-pane-toggle"

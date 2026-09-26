@@ -35,7 +35,7 @@ function unavailable(provider: AiProviderName, model: string, error: string): Ai
 export function createOllamaProvider(): AiProvider {
   const baseUrl = (process.env.SETWIN_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434").replace(/\/$/, "");
   const defaultModel = process.env.SETWIN_OLLAMA_MODEL ?? "qwen2.5:7b";
-  const timeoutMs = Number(process.env.SETWIN_OLLAMA_TIMEOUT_MS ?? 120_000);
+  const timeoutMs = Number(process.env.SETWIN_OLLAMA_TIMEOUT_MS ?? 300_000);
   return {
     name: "ollama",
     isConfigured: () => true,
@@ -51,7 +51,7 @@ export function createOllamaProvider(): AiProvider {
             options: { temperature: request.temperature ?? 0.2 },
           },
           {},
-          Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120_000,
+          Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 300_000,
         );
         if (!result.ok) {
           return unavailable("ollama", model, `HTTP ${result.status}: ${result.text.slice(0, 200)}`);

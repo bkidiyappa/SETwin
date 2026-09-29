@@ -96,6 +96,7 @@ export async function createStoriesFromPrompt(
       databaseUrl,
       {
         task: "story.split",
+        agent: "requirements",
         system: buildRoleSystemPrompt("product_owner", "prompt_to_stories"),
         prompt: `Project: ${input.project}\n\nStakeholder prompt:\n${prompt}\n\nReturn JSON only.`,
       },
@@ -160,27 +161,92 @@ export function formatStoryBody(description: string, acceptanceCriteria: string)
   let gherkin = acceptanceCriteria.trim();
   if (gherkin && !/^Feature:/im.test(gherkin)) {
     const headline = desc.split(/[.!\n]/)[0] || "Story";
-    gherkin = [
-      `Feature: ${headline}`,
-      "  Scenario: Acceptance",
-      "    Given the precondition is met",
-      "    When the described behavior occurs",
-      "    Then the acceptance criteria are satisfied",
-      "",
-      gherkin,
-    ].join("\n");
+    gherkin = [`Feature: ${headline}`, "", gherkin].join("\n");
   }
-  if (!gherkin) {
-    const title = desc.split(/[.!\n]/)[0] || "Story";
-    gherkin = [
-      `Feature: ${title}`,
-      "  Scenario: Happy path",
-      "    Given the precondition is met",
-      `    When the actor performs the action for "${title.replaceAll('"', "'")}"`,
-      "    Then the expected outcome is observed",
-    ].join("\n");
+  const parts = ["## Description", desc];
+  if (gherkin) {
+    parts.push("", "## Acceptance Criteria", "", "```gherkin", gherkin, "```");
   }
-  return ["## Description", desc, "", "## Acceptance Criteria", "", "```gherkin", gherkin, "```"].join("\n");
+  return parts.join("\n");
+}
+
+function plainText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
+}
+
+function stepText(value: unknown, keyword: string): string {
+  const text = Array.isArray(value) ? value.map(plainText).filter(Boolean).join(" and ") : plainText(value);
+  return text.replace(new RegExp(`^${keyword}\\s+`, "i"), "").trim();
+}
+
+function scenarioToGherkin(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const row = value as Record<string, unknown>;
+  const name = plainText(row.scenario ?? row.name ?? row.title) || "Acceptance";
+  const given = stepText(row.given ?? row.Given, "given");
+  const when = stepText(row.when ?? row.When, "when");
+  const then = stepText(row.then ?? row.Then, "then");
+  if (!given && !when && !then) {
+    return "";
+  }
+  const lines = [`  Scenario: ${name}`];
+  if (given) lines.push(`    Given ${given}`);
+  if (when) lines.push(`    When ${when}`);
+  if (then) lines.push(`    Then ${then}`);
+  return lines.join("\n");
+}
+
+function blockToGherkin(value: unknown, title: string): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "";
+  }
+  const row = value as Record<string, unknown>;
+  if (Array.isArray(row.scenarios) || plainText(row.feature)) {
+    const feature = plainText(row.feature) || title;
+    const scenarios = Array.isArray(row.scenarios) ? row.scenarios.map(scenarioToGherkin).filter(Boolean) : [];
+    return scenarios.length ? [`Feature: ${feature}`, ...scenarios].join("\n") : "";
+  }
+  return scenarioToGherkin(row);
+}
+
+function acceptanceToGherkin(value: unknown, title: string): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => blockToGherkin(item, title)).filter(Boolean).join("\n\n");
+  }
+  return blockToGherkin(value, title);
+}
+
+function storyNotes(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  const lines = value.flatMap((row) => {
+    if (!row || typeof row !== "object") {
+      return [];
+    }
+    const record = row as Record<string, unknown>;
+    const description = plainText(record.description ?? record.note ?? record.text);
+    if (!description) {
+      return [];
+    }
+    const kind = plainText(record.type);
+    return [`- ${kind ? `${kind}: ` : ""}${description}`];
+  });
+  return lines.length ? ["## Notes", ...lines].join("\n") : "";
 }
 
 export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryDraft[] {
@@ -190,21 +256,20 @@ export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryD
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[0]) as {
-          stories?: Array<{
-            title?: string;
-            description?: string;
-            content?: string;
-            acceptanceCriteria?: string;
-            acceptance_criteria?: string;
-          }>;
+          stories?: Array<Record<string, unknown>>;
+          ambiguity_conflicts?: unknown;
+          notes?: unknown;
         };
         if (Array.isArray(parsed.stories) && parsed.stories.length) {
+          const notes = storyNotes(parsed.ambiguity_conflicts ?? parsed.notes);
           return parsed.stories
-            .map((row) => {
-              const title = (row.title || "Story").trim().slice(0, 120);
-              const description = (row.description || row.content || title).trim();
-              const ac = (row.acceptanceCriteria || row.acceptance_criteria || "").trim();
-              return { title, content: formatStoryBody(description, ac) };
+            .map((row, index) => {
+              const title = (plainText(row.title) || "Story").slice(0, 120);
+              const description = plainText(row.description ?? row.content) || title;
+              const ac = acceptanceToGherkin(row.acceptanceCriteria ?? row.acceptance_criteria, title);
+              const body = formatStoryBody(description, ac);
+              const content = index === 0 && notes ? `${body}\n\n${notes}` : body;
+              return { title, content };
             })
             .filter((row) => row.content);
         }
@@ -320,6 +385,7 @@ export async function reviseRequirementFromFeedback(
       databaseUrl,
       {
         task: "requirement.analyze",
+        agent: "requirements",
         system: buildRoleSystemPrompt("product_owner", "respond_to_approval_feedback"),
         prompt: [
           `Requirement ${current.key} current title: ${current.currentVersion.title}`,
@@ -417,7 +483,7 @@ export async function generateGherkinDraft(
   const ai = requireAiCompletion(
     await completeViaGateway(
       databaseUrl,
-      { task: "gherkin.generate", prompt, system },
+      { task: "gherkin.generate", agent: "tests", prompt, system },
       actor,
     ),
     "gherkin.generate",

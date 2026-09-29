@@ -1,4 +1,4 @@
-﻿import { completeViaGateway, extractJsonObject, requireAiCompletion, stripModelReasoning } from "@setwin/ai";
+﻿import { completeViaGateway, extractJsonObject, llmAgentForRole, requireAiCompletion, stripModelReasoning } from "@setwin/ai";
 import { recordAuditEvent } from "@setwin/audit";
 import { ValidationError, type Principal } from "@setwin/auth";
 import {
@@ -27,6 +27,7 @@ import {
   type ArtifactType,
 } from "@setwin/twin";
 import { buildRoleSystemPrompt, roleForArtifactType } from "./skills.ts";
+import { parseWorkSteps, type WorkStep } from "./work-steps.ts";
 
 export type FollowOnKind = "design" | "architecture" | "code" | "tests";
 
@@ -240,6 +241,7 @@ export async function reviseArtifactFromRejection(
       databaseUrl,
       {
         task: "artifact.revise",
+        agent: llmAgentForRole(role),
         system: buildRoleSystemPrompt(role, taskId),
         prompt: [
           `Artifact ${current.key} (${current.type}) title: ${current.currentVersion.title}`,
@@ -378,6 +380,7 @@ export async function proposeFollowOnArtifacts(
       databaseUrl,
       {
         task: `artifact.${input.kind}`,
+        agent: llmAgentForRole(kind.role),
         system: buildRoleSystemPrompt(kind.role, kind.task),
         prompt: [
           `Project: ${input.project}`,
@@ -692,6 +695,7 @@ async function proposeCodeIntoRepository(
       databaseUrl,
       {
         task: "artifact.code",
+        agent: "coding",
         system: buildRoleSystemPrompt("developer", "propose_implementation"),
         prompt: [
           `Project: ${input.project}`,
@@ -1087,77 +1091,13 @@ async function proposeOrUpdateGherkin(
     return existing.map((row) => ({ ...row, aiStatus: "reused", reused: true }));
   }
 
-  const existingBlock = existing.length
-    ? existing
-        .map(
-          (row) =>
-            `### ${row.key} (${row.currentVersion.workflowState}) ${row.currentVersion.title}\n\`\`\`gherkin\n${row.currentVersion.content}\n\`\`\``,
-        )
-        .join("\n\n")
-    : "(none — create new scenarios)";
-
-  const ai = requireAiCompletion(
-    await completeViaGateway(
-      databaseUrl,
-      {
-        task: "artifact.tests",
-        system: buildRoleSystemPrompt("qe", "requirement_to_tests"),
-        prompt: [
-          `Project: ${input.project}`,
-          "Produce one Gherkin Feature with multiple Scenarios (happy path + edge/negative).",
-          "Each Scenario will be stored as its own twin test artifact — use clear distinct Scenario names.",
-          "Reuse/adapt existing scenarios when still valid; otherwise modify or add.",
-          "Output Gherkin only (start with Feature:).",
-          "",
-          input.context,
-          "",
-          "## Existing Gherkin tests",
-          existingBlock,
-        ].join("\n"),
-      },
-      input.actor,
-    ),
-    "artifact.tests",
-  );
-
-  let text = ai.text.trim();
-  const gherkinFence = text.match(/```(?:gherkin)?\s*([\s\S]*?)```/i);
-  if (gherkinFence) {
-    text = gherkinFence[1].trim();
-  }
-  const featureAt = text.search(/^\s*Feature\s*:/im);
-  if (featureAt > 0) {
-    text = text.slice(featureAt).trim();
-  }
   const featureTitle = input.sources[0]?.currentVersion.title ?? "Acceptance";
-  if (text && !/^Feature:/im.test(text)) {
-    text = `Feature: ${featureTitle}\n${text}`;
-  }
-  // Strip markdown bold accidentally put in Feature titles (breaks clean Gherkin).
-  text = text.replace(/^(\s*Feature:\s*)\*+([^*]+)\*+/im, "$1$2");
-
-  let scenarioDocs: Array<{ title: string; content: string }>;
-  try {
-    scenarioDocs = text ? splitGherkinScenarios(text) : [];
-  } catch {
-    scenarioDocs = [];
-  }
-  scenarioDocs = scenarioDocs.filter((doc) => isValidGherkinDoc(doc.content));
-  if (!scenarioDocs.length) {
-    throw new ValidationError(
-      "LLM unavailable for artifact.tests: model did not return valid Gherkin scenarios. Task not completed.",
-    );
-  }
-  // Always land at least happy + negative as separate TST artifacts when the model under-produces.
-  if (scenarioDocs.length < 2) {
-    const titles = new Set(scenarioDocs.map((doc) => doc.title.trim().toLowerCase()));
-    for (const doc of fallbackGherkinDocs(featureTitle)) {
-      if (!titles.has(doc.title.trim().toLowerCase()) && isValidGherkinDoc(doc.content)) {
-        scenarioDocs.push(doc);
-        titles.add(doc.title.trim().toLowerCase());
-      }
-    }
-  }
+  const { scenarioDocs, stopped } = await collectScenarioDocs(databaseUrl, {
+    project: input.project,
+    featureTitle,
+    context: input.context,
+    actor: input.actor,
+  });
 
   const bundleStories = (await resolveFeatureBundle(databaseUrl, input.sources.map((s) => s.key), input.actor)).stories;
   const requirementKey =
@@ -1257,6 +1197,11 @@ async function proposeOrUpdateGherkin(
     results.push({ ...record, aiStatus: "ok", reused: false });
   }
 
+  if (stopped) {
+    const saved = scenarioDocs.map((doc) => doc.title).join(", ") || "none";
+    throw new ValidationError(`${stopped} Saved scenarios: ${saved}.`);
+  }
+
   const byKey = new Map<string, ArtifactRecord & { aiStatus: string; aiError?: string; reused?: boolean }>();
   for (const row of results) {
     byKey.set(row.key, row);
@@ -1299,7 +1244,7 @@ export async function syncCodeAndTestsFromDesign(
   const existingCode = existingCodeList[0] ?? null;
   const existingGherkin = existingTestList.filter((row) => row.type === "GHERKIN");
 
-  const [code, tests] = await Promise.all([
+  const [codeResult, testsResult] = await Promise.allSettled([
     proposeCodeIntoRepository(databaseUrl, {
       project: input.project,
       sources: [design, ...bundle.stories],
@@ -1316,5 +1261,153 @@ export async function syncCodeAndTestsFromDesign(
     }),
   ]);
 
-  return { code, tests };
+  if (codeResult.status === "rejected") {
+    const testsDetail = testsResult.status === "rejected" ? ` Tests: ${errorText(testsResult.reason)}` : "";
+    throw new ValidationError(`${errorText(codeResult.reason)}${testsDetail}`);
+  }
+  if (testsResult.status === "rejected") {
+    throw new ValidationError(
+      `Code ${codeResult.value.key} was saved. Tests did not finish. ${errorText(testsResult.reason)}`,
+    );
+  }
+
+  return { code: codeResult.value, tests: testsResult.value };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function shortenContext(context: string, limit = 1800): string {
+  const text = context.trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit)}\n…[shortened so this step stays small]`;
+}
+
+async function collectScenarioDocs(
+  databaseUrl: string,
+  input: { project: string; featureTitle: string; context: string; actor?: Principal },
+): Promise<{ scenarioDocs: Array<{ title: string; content: string }>; stopped: string }> {
+  const brief = shortenContext(input.context);
+  const plan = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      {
+        task: "artifact.tests.plan",
+        agent: "tests",
+        think: false,
+        maxTokens: 500,
+        temperature: 0.1,
+        system:
+          "Split the testing work into small steps. Reply with JSON only: {\"steps\":[{\"title\":\"scenario name\",\"intent\":\"one sentence\"}]}. Use 2 to 6 steps. Do not write Gherkin.",
+        prompt: [
+          `Project: ${input.project}`,
+          `Feature: ${input.featureTitle}`,
+          "List the scenarios to write. Each step must be small enough to finish in one short reply.",
+          "",
+          brief,
+        ].join("\n"),
+      },
+      input.actor,
+    ),
+    "artifact.tests.plan",
+  );
+  const steps = parseWorkSteps(plan.text);
+  if (!steps.length) {
+    throw new ValidationError(
+      `Tests were not started. The model did not return a step list. Reply began: ${plan.text.replace(/\s+/g, " ").slice(0, 280)}`,
+    );
+  }
+
+  const scenarioDocs: Array<{ title: string; content: string }> = [];
+  let stopped = "";
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index]!;
+    try {
+      const doc = await writeOneScenario(databaseUrl, {
+        project: input.project,
+        featureTitle: input.featureTitle,
+        context: brief,
+        step,
+        index,
+        total: steps.length,
+        actor: input.actor,
+      });
+      if (!doc) {
+        stopped = `Stopped on scenario ${index + 1} of ${steps.length} (${step.title}). The model did not return valid Gherkin.`;
+        break;
+      }
+      scenarioDocs.push(doc);
+    } catch (error) {
+      stopped = `Stopped on scenario ${index + 1} of ${steps.length} (${step.title}). ${errorText(error)}`;
+      break;
+    }
+  }
+  if (!scenarioDocs.length) {
+    throw new ValidationError(stopped || "Tests were not started. No scenario was written.");
+  }
+  return { scenarioDocs, stopped };
+}
+
+async function writeOneScenario(
+  databaseUrl: string,
+  input: {
+    project: string;
+    featureTitle: string;
+    context: string;
+    step: WorkStep;
+    index: number;
+    total: number;
+    actor?: Principal;
+  },
+): Promise<{ title: string; content: string } | null> {
+  const ai = requireAiCompletion(
+    await completeViaGateway(
+      databaseUrl,
+      {
+        task: "artifact.tests.step",
+        agent: "tests",
+        think: false,
+        maxTokens: 900,
+        temperature: 0.2,
+        system: "Write exactly one Gherkin Scenario. No commentary. Start with Feature:.",
+        prompt: [
+          `Project: ${input.project}`,
+          `This is step ${input.index + 1} of ${input.total}.`,
+          `Write only: ${input.step.title}`,
+          input.step.intent ? `Intent: ${input.step.intent}` : "",
+          `Feature name: ${input.featureTitle}`,
+          "",
+          input.context,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+      input.actor,
+    ),
+    "artifact.tests.step",
+  );
+  let text = ai.text.trim();
+  const fenced = text.match(/```(?:gherkin)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    text = fenced[1].trim();
+  }
+  const featureAt = text.search(/^\s*Feature\s*:/im);
+  if (featureAt > 0) {
+    text = text.slice(featureAt).trim();
+  }
+  if (text && !/^Feature:/im.test(text)) {
+    text = `Feature: ${input.featureTitle}\n${text}`;
+  }
+  text = text.replace(/^(\s*Feature:\s*)\*+([^*]+)\*+/im, "$1$2");
+  let docs: Array<{ title: string; content: string }> = [];
+  try {
+    docs = text ? splitGherkinScenarios(text) : [];
+  } catch {
+    docs = [];
+  }
+  const valid = docs.find((doc) => isValidGherkinDoc(doc.content));
+  return valid ?? null;
 }

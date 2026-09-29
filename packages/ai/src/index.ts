@@ -11,6 +11,23 @@ export {
 } from "./gateway.ts";
 export { requireAiCompletion, stripModelReasoning, extractJsonObject, type AiCompletionOk } from "./require.ts";
 export {
+  LLM_AGENTS,
+  LLM_PROVIDERS,
+  agentForRequest,
+  effectiveRoutesForSetup,
+  llmAgentForRole,
+  loadEffectiveLlmRoutes,
+  mergeLlmRoutes,
+  isProviderName,
+  parseLlmRouteSpec,
+  parseProviderModel,
+  resolveAgentAssignment,
+  writeStoredLlmRoutes,
+  type AgentModelAssignment,
+  type LlmAgentId,
+  type StoredLlmRoute,
+} from "./routes.ts";
+export {
   createAnthropicProvider,
   createAzureProvider,
   createBedrockProvider,

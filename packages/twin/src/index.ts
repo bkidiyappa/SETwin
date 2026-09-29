@@ -48,14 +48,17 @@ export { getArtifactAbout, type ArtifactAbout, type ArtifactAboutEvent } from ".
 export { listProjectDashboard, summarizeProjectDashboard, type ProjectDashboardStats } from "./dashboard.ts";
 export {
   PLAN_LANES,
+  addTestPlanItem,
   classifyTestPlan,
   createTestPlan,
   ensureMasterTestPlans,
   extractSourcePaths,
   getTestPlan,
   listTestPlans,
+  mergePlanItems,
   rebaselineMasterTestPlan,
   releaseTestPlan,
+  removeTestPlanItem,
   renameTestPlan,
   type ClassifiedPlan,
   type PlanLane,

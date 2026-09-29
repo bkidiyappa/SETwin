@@ -28,4 +28,76 @@ describe("requirement intelligence", () => {
     expect(drafts).toHaveLength(2);
     expect(drafts[0].title).toBe("Cancel unpaid");
   });
+
+  it("keeps structured acceptance criteria as Gherkin instead of a stub", () => {
+    const drafts = parseStoryDrafts(
+      JSON.stringify({
+        stories: [
+          {
+            title: "Login Page Creation",
+            description: "Implement a login page for enterprise users.",
+            acceptance_criteria: [
+              {
+                feature: "Login Page",
+                scenarios: [
+                  {
+                    scenario: "User submits invalid credentials",
+                    given: "User is on the login page",
+                    when: "User enters invalid username or password and clicks login",
+                    then: "An error message is displayed indicating invalid credentials",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            title: "Dashboard Redirect on Login",
+            description: "Redirect the user to the dashboard after login.",
+            acceptance_criteria: [
+              {
+                feature: "Dashboard Redirect",
+                scenarios: [
+                  {
+                    scenario: "Successful login redirects to dashboard",
+                    given: "User has successfully logged in",
+                    when: "User completes the login process",
+                    then: "User is redirected to the dashboard page",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        ambiguity_conflicts: [{ type: "ambiguity", description: "Role selection is unspecified." }],
+      }),
+      "login",
+    );
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].title).toBe("Login Page Creation");
+    expect(drafts[0].content).toContain("Scenario: User submits invalid credentials");
+    expect(drafts[0].content).toContain("Then An error message is displayed indicating invalid credentials");
+    expect(drafts[0].content).not.toContain('action for "{"');
+    expect(drafts[0].content).toContain("Role selection is unspecified.");
+    expect(drafts[1].title).toBe("Dashboard Redirect on Login");
+    expect(drafts[1].content).toContain("Feature: Dashboard Redirect");
+  });
+
+  it("does not invent a generic acceptance scenario", () => {
+    const drafts = parseStoryDrafts(
+      JSON.stringify({
+        stories: [
+          {
+            title: "Login Page UI",
+            description: "Show a login form.",
+            acceptanceCriteria:
+              "Given the user navigates to the login page, When they view the page, Then they see a form.",
+          },
+        ],
+      }),
+      "login",
+    );
+    expect(drafts[0].content).toContain("Then they see a form.");
+    expect(drafts[0].content).not.toContain("Scenario: Acceptance");
+    expect(drafts[0].content).not.toContain("the precondition is met");
+  });
 });

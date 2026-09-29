@@ -5,6 +5,7 @@ import { requirePermission, type Principal } from "@setwin/auth";
 import { aiActions, withDatabase } from "@setwin/database";
 import { appendLlmLog } from "./llm-log.ts";
 import { createAllProviders } from "./providers.ts";
+import { agentForRequest, loadEffectiveLlmRoutes, resolveAgentAssignment } from "./routes.ts";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiProviderName } from "./types.ts";
 
 export { requireAiCompletion } from "./require.ts";
@@ -50,7 +51,16 @@ export async function completeViaGateway(
   const callStarted = new Date();
 
   const providers = options.providers ?? createAllProviders();
-  const order = routeProviders(request.task, options.preferredProvider);
+  const agent = agentForRequest(request);
+  const assignment = resolveAgentAssignment(agent, loadEffectiveLlmRoutes());
+  const routed: AiCompletionRequest =
+    assignment?.model && !request.model ? { ...request, model: assignment.model } : request;
+  const order = assignment ? [assignment.provider] : routeProviders(request.task, options.preferredProvider);
+  const routeNote = assignment
+    ? `agent=${agent ?? "default"} provider=${assignment.provider}${assignment.model ? ` model=${assignment.model}` : ""}`
+    : options.preferredProvider
+      ? `preferred=${options.preferredProvider}`
+      : undefined;
   let lastAttempt: AiCompletionResult | undefined;
   const skipNotes: string[] = [];
   for (const name of order) {
@@ -63,7 +73,7 @@ export async function completeViaGateway(
       continue;
     }
     const attemptStarted = new Date();
-    const result = await provider.complete(request);
+    const result = await provider.complete(routed);
     const attemptFinished = new Date();
     lastAttempt = result;
     const responseLogged = truncateForLog(result.text ?? "", maxChars);
@@ -80,10 +90,10 @@ export async function completeViaGateway(
       system: systemLogged.text,
       prompt: promptLogged.text,
       response: responseLogged.text,
-      note: options.preferredProvider ? `preferred=${options.preferredProvider}` : undefined,
+      note: routeNote,
     });
     if (result.status === "ok" && result.text.trim()) {
-      const actionId = await persistAction(databaseUrl, request, result, actor);
+      const actionId = await persistAction(databaseUrl, routed, result, actor);
       return { ...result, actionId };
     }
   }
@@ -95,8 +105,8 @@ export async function completeViaGateway(
           (skipNotes.length > 0 ? `No usable provider. Skipped: ${skipNotes.join("; ")}` : "No AI provider available"),
       }
     : {
-        provider: "ollama",
-        model: request.model ?? "unknown",
+        provider: assignment?.provider ?? "ollama",
+        model: routed.model || assignment?.model || "unknown",
         text: "",
         status: "unavailable",
         error:
@@ -136,7 +146,7 @@ export async function completeViaGateway(
     },
     "llm.unavailable",
   );
-  const actionId = await persistAction(databaseUrl, request, failed, actor);
+  const actionId = await persistAction(databaseUrl, routed, failed, actor);
   return { ...failed, actionId };
 }
 

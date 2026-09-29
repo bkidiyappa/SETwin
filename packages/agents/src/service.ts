@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { desc, eq } from "drizzle-orm";
-import { completeViaGateway, requireAiCompletion } from "@setwin/ai";
+import { completeViaGateway, llmAgentForRole, requireAiCompletion } from "@setwin/ai";
 import { recordAuditEvent } from "@setwin/audit";
 import { NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import { agentProposals, codingAgentRuns, projects, withDatabase } from "@setwin/database";
@@ -40,6 +40,7 @@ export async function proposeAsRole(
       databaseUrl,
       {
         task: "agent.propose",
+        agent: llmAgentForRole(role),
         system: buildRoleSystemPrompt(role, taskId),
         prompt: `Project ${input.project}. Topic: ${input.topic}`,
       },

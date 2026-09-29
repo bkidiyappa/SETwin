@@ -57,7 +57,11 @@ If port 8000 is already in use, an API is already running. Use that one, or stop
 1. On the sign-in page, enter the administrator username and password.
 2. Click **Log in**.
 
+![Sign in](images/sign-in.png)
+
 The top bar shows whether the database is up, who is signed in, **Refresh**, and **Sign out**. **Refresh** reloads the page you are on.
+
+![Dashboard after sign-in](images/dashboard.png)
 
 Setup changes are administrator-only. If Setup says read-only, sign in as the administrator.
 
@@ -66,6 +70,8 @@ Setup changes are administrator-only. If Setup says read-only, sign in as the ad
 ## 4. Set up a product
 
 Open **Setup** in the left menu. Complete the four sections in order.
+
+![Setup, with a product, tech stack, and features](images/setup.png)
 
 ### 4.1 Create the product
 
@@ -118,6 +124,8 @@ Without a model, you can still create and edit cards by hand. Generation buttons
 
 Open **Workspace** and choose the product.
 
+![Workspace, with stories, design, code, and tests](images/workspace.png)
+
 1. Write what the product should do in the prompt at the top.
 2. Click **Create stories**.
 3. On each story, choose a **Feature**, then **Save**.
@@ -139,9 +147,14 @@ Code is written into the registered repo as uncommitted files. Review the file l
 
 Open **Twin Explorer** and choose the product.
 
+![Twin Explorer node graph and related cards](images/twin-explorer.png)
+
 - Click a node to select it. The cards below list the artifacts linked to it.
 - When you select a test, those cards show only the nodes directly connected to that test.
 - Right-click a node and choose **Tell me about it** to see who created it, which design it is linked to, and who submitted or approved it.
+- In the node graph toolbar, type a key or a word and click **Search**. The graph keeps the matching nodes and the links between them, and the count changes to something like `3 of 9 nodes`. **Clear** shows every node again.
+
+![Graph search keeping the nodes that match reset](images/twin-search.png)
 
 ---
 
@@ -149,7 +162,11 @@ Open **Twin Explorer** and choose the product.
 
 Open **Test Plans**.
 
+![Test plan list, with the master plan above the snapshots](images/test-plans.png)
+
 The **Master Test Plan** section is at the top. Each product has one plan named **Master Test Plan - &lt;product name&gt;**. Opening it refreshes the plan from the current stories, code, and tests. **Last updated** is the last time that set changed. **Rebaseline** does the same refresh while you are looking at the plan.
+
+![Master test plan, with Automate on each manual test](images/master-plan.png)
 
 Other plans are saved snapshots:
 
@@ -171,6 +188,12 @@ Tests are grouped into four lists:
 - Regression, non-functional
 
 A test is non-functional when its Gherkin has `@non-functional`, `@performance`, `@security`, `@accessibility`, or `@reliability`. Each row shows whether it is Automated or Manual, and the latest run: Passed, Failed, Skipped, or Not run.
+
+On the master plan, **Automate** on a manual test writes an OpenSecant script into the registered product repo at `tests/smoke/<name>.test` and links that test to the file. The row then shows **Automated**, the script path, **Edit**, and **Run**.
+
+**Edit** points the test at a different `.test` file already in the repo, or clears the link. The file stays on disk. Use that when several manual tests should share one script: automate the first test, then edit the others onto the same file.
+
+**Run** executes that script. Every test linked to the same file gets the same Passed or Failed result. The product repo needs [OpenSecant](https://github.com/bkidiyappa/OpenSecant) installed so `npx opensecant` runs from that folder. OpenSecant reads `tests/` from the product repo when that folder exists.
 
 Turn on **Include released** to see released plans in the lower list. Master plans stay in the top section.
 

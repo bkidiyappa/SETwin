@@ -244,6 +244,8 @@ export function TwinExplorerPage() {
   const [reqQuery, setReqQuery] = useState("");
   const [codeQuery, setCodeQuery] = useState("");
   const [testQuery, setTestQuery] = useState("");
+  const [graphDraft, setGraphDraft] = useState("");
+  const [graphQuery, setGraphQuery] = useState("");
   const [error, setError] = useState("");
   const [pageLoading, setPageLoading] = useState(true);
   const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; key: string } | null>(null);
@@ -337,6 +339,8 @@ export function TwinExplorerPage() {
         }
         setPipeline(status);
         setSelectedKey("");
+        setGraphDraft("");
+        setGraphQuery("");
         setZoom(1);
         setPan({ x: 0, y: 0 });
       } catch (err) {
@@ -443,6 +447,16 @@ export function TwinExplorerPage() {
     () => layoutForce(allArtifacts, allEdges, graphWidth, graphHeight),
     [allArtifacts, allEdges],
   );
+  const graphMatchKeys = useMemo(() => {
+    const query = graphQuery.trim();
+    if (!query) {
+      return null;
+    }
+    return new Set(allArtifacts.filter((row) => matchesQuery(row, query)).map((row) => row.key.toUpperCase()));
+  }, [allArtifacts, graphQuery]);
+  const shownNodeCount = graphMatchKeys
+    ? nodes.filter((node) => graphMatchKeys.has(node.key.toUpperCase())).length
+    : nodes.length;
 
   const visibleEdges = useMemo(() => {
     if (!connectedKeys) {
@@ -533,6 +547,12 @@ export function TwinExplorerPage() {
               if (!from || !to) {
                 return null;
               }
+              if (
+                graphMatchKeys &&
+                (!graphMatchKeys.has(from.key.toUpperCase()) || !graphMatchKeys.has(to.key.toUpperCase()))
+              ) {
+                return null;
+              }
               const dimmed =
                 connectedKeys &&
                 (!connectedKeys.has(from.key.toUpperCase()) || !connectedKeys.has(to.key.toUpperCase()));
@@ -548,6 +568,9 @@ export function TwinExplorerPage() {
               );
             })}
             {nodes.map((node) => {
+              if (graphMatchKeys && !graphMatchKeys.has(node.key.toUpperCase())) {
+                return null;
+              }
               const inFocus = !connectedKeys || connectedKeys.has(node.key.toUpperCase());
               const isSelected = Boolean(selectedKey) && node.key.toUpperCase() === selectedKey.toUpperCase();
               const radius = Math.min(28, 10 + Math.sqrt(node.degree + 1) * 4) + (isSelected ? 4 : 0);
@@ -597,6 +620,11 @@ export function TwinExplorerPage() {
               );
             })}
           </g>
+          {graphMatchKeys && shownNodeCount === 0 ? (
+            <text x={graphWidth / 2} y={height / 2} textAnchor="middle" className="twin-graph-empty">
+              No nodes match this search
+            </text>
+          ) : null}
         </svg>
       </div>
     );
@@ -670,6 +698,41 @@ export function TwinExplorerPage() {
     );
   }
 
+  function applyGraphSearch(): void {
+    setGraphQuery(graphDraft.trim());
+  }
+
+  function clearGraphSearch(): void {
+    setGraphDraft("");
+    setGraphQuery("");
+  }
+
+  function renderGraphSearch(): ReactNode {
+    return (
+      <form
+        className="twin-graph-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          applyGraphSearch();
+        }}
+      >
+        <input
+          className="twin-search"
+          value={graphDraft}
+          onChange={(event) => setGraphDraft(event.target.value)}
+          placeholder="Search nodes…"
+          aria-label="Search nodes"
+        />
+        <button type="submit">Search</button>
+        {graphQuery ? (
+          <button type="button" onClick={clearGraphSearch}>
+            Clear
+          </button>
+        ) : null}
+      </form>
+    );
+  }
+
   function closeModal(): void {
     // Selection / search state already live on the page — closing syncs them back to the panes.
     setExpanded(null);
@@ -722,6 +785,7 @@ export function TwinExplorerPage() {
               setReqQuery("");
               setCodeQuery("");
               setTestQuery("");
+              clearGraphSearch();
             }}
           >
             Clear selection
@@ -744,11 +808,12 @@ export function TwinExplorerPage() {
             Node graph
             <span className="muted">
               {" "}
-              · {nodes.length} nodes · zoom {Math.round(zoom * 100)}%
+              · {graphMatchKeys ? `${shownNodeCount} of ${nodes.length}` : nodes.length} nodes · zoom {Math.round(zoom * 100)}%
               {selected ? ` · focused on ${selected.key}` : ""}
             </span>
           </div>
           <div className="toolbar" style={{ marginBottom: 0 }}>
+            {renderGraphSearch()}
             <button type="button" onClick={() => zoomBy(1.15)} title="Zoom in (more detail)">
               +
             </button>
@@ -855,6 +920,7 @@ export function TwinExplorerPage() {
               {expanded === "graph" ? (
                 <>
                   <div className="toolbar">
+                    {renderGraphSearch()}
                     <button type="button" onClick={() => zoomBy(1.15)}>
                       Zoom in (details)
                     </button>

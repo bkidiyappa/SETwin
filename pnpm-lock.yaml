@@ -50,6 +50,9 @@ importers:
       '@setwin/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@setwin/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@setwin/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
@@ -345,12 +348,21 @@ importers:
       '@setwin/auth':
         specifier: workspace:*
         version: link:../auth
+      '@setwin/database':
+        specifier: workspace:*
+        version: link:../database
+      '@setwin/repo':
+        specifier: workspace:*
+        version: link:../repo
       '@setwin/testing':
         specifier: workspace:*
         version: link:../testing
       '@setwin/twin':
         specifier: workspace:*
         version: link:../twin
+      drizzle-orm:
+        specifier: ^0.44.5
+        version: 0.44.7(postgres@3.4.9)
 
   packages/openvector:
     dependencies:

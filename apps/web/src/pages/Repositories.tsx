@@ -10,14 +10,6 @@ type Repository = {
   lastIndexedAt: string | null;
 };
 
-type SymbolRow = {
-  id: string;
-  filePath: string;
-  language: string;
-  kind: string;
-  name: string;
-};
-
 type Project = {
   key: string;
   name: string;
@@ -30,8 +22,6 @@ export function RepositoriesPage() {
   const [newProjectKey, setNewProjectKey] = useState("orderdemo");
   const [newProjectName, setNewProjectName] = useState("Order Demo");
   const [path, setPath] = useState("");
-  const [selectedId, setSelectedId] = useState("");
-  const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -102,7 +92,6 @@ export function RepositoriesPage() {
       setMessage(`Registered ${row.path} (${row.defaultBranch})`);
       setPath("");
       await load();
-      setSelectedId(row.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -118,23 +107,6 @@ export function RepositoriesPage() {
       const result = await apiPost<{ symbols: number; edges: number }>(`/repos/${id}/index`, {});
       setMessage(`Indexed symbols=${result.symbols} edges=${result.edges}`);
       await load();
-      const rows = await apiGet<SymbolRow[]>(`/repos/${id}/symbols`);
-      setSelectedId(id);
-      setSymbols(rows.slice(0, 100));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function showSymbols(id: string): Promise<void> {
-    setBusy(true);
-    setError("");
-    try {
-      const rows = await apiGet<SymbolRow[]>(`/repos/${id}/symbols`);
-      setSelectedId(id);
-      setSymbols(rows.slice(0, 100));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -255,9 +227,6 @@ export function RepositoriesPage() {
                     <button type="button" disabled={busy} onClick={() => void indexRepo(row.id)}>
                       Index
                     </button>
-                    <button type="button" disabled={busy} onClick={() => void showSymbols(row.id)}>
-                      Symbols
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -268,35 +237,6 @@ export function RepositoriesPage() {
           <p className="muted">No repositories yet. Create a project, then register a path above.</p>
         ) : null}
       </div>
-
-      {selectedId ? (
-        <div className="panel">
-          <h2>Symbols {symbols.length > 0 ? `(showing ${symbols.length})` : ""}</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Kind</th>
-                <th>Name</th>
-                <th>Language</th>
-                <th>File</th>
-              </tr>
-            </thead>
-            <tbody>
-              {symbols.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.kind}</td>
-                  <td>{row.name}</td>
-                  <td>{row.language}</td>
-                  <td>
-                    <code>{row.filePath}</code>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {symbols.length === 0 ? <p className="muted">Index this repository to populate symbols.</p> : null}
-        </div>
-      ) : null}
     </div>
   );
 }

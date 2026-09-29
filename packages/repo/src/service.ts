@@ -381,24 +381,6 @@ export async function listRepositories(
   });
 }
 
-export async function listSymbols(
-  databaseUrl: string,
-  repositoryId: string,
-  actor?: Principal,
-): Promise<Array<{ id: string; filePath: string; language: string; kind: string; name: string }>> {
-  await requirePermission(databaseUrl, actor, "repo:view");
-  return withDatabase(databaseUrl, async ({ db }) => {
-    const rows = await db.select().from(codeSymbols).where(eq(codeSymbols.repositoryId, repositoryId));
-    return rows.map((row) => ({
-      id: row.id,
-      filePath: row.filePath,
-      language: row.language,
-      kind: row.kind,
-      name: row.name,
-    }));
-  });
-}
-
 export async function recallCodeNeighborhood(
   databaseUrl: string,
   input: { project: string; filePaths: string[] },

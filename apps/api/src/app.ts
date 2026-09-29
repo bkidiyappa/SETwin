@@ -9,13 +9,6 @@ import {
 } from "@setwin/config";
 import { buildStatus } from "@setwin/core";
 import { applyMigrations } from "@setwin/database";
-import {
-  AuthenticationError,
-  AuthorizationError,
-  ConflictError,
-  NotFoundError,
-  ValidationError,
-} from "@setwin/auth";
 import { registerIdentityRoutes } from "./identity.ts";
 import { registerTwinRoutes } from "./twin.ts";
 import { registerGherkinRoutes } from "./gherkin.ts";
@@ -24,6 +17,33 @@ import { registerReviewRoutes } from "./review.ts";
 import { registerPhaseRoutes } from "./phases.ts";
 import { registerTestPlanRoutes } from "./test-plans.ts";
 import { registerAttachmentRoutes } from "./attachments.ts";
+import { registerLlmRouteRoutes } from "./llm-routes.ts";
+
+function explainError(error: unknown): { statusCode: number; message: string } {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let message = "";
+  let statusCode = 500;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const row = current as { statusCode?: unknown; message?: unknown; cause?: unknown };
+    const text = typeof row.message === "string" ? row.message.trim() : "";
+    if (text && text !== "Internal Server Error" && !message) {
+      message = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+    }
+    if (typeof row.statusCode === "number" && row.statusCode >= 400 && row.statusCode < 500) {
+      statusCode = row.statusCode;
+    }
+    current = row.cause;
+  }
+  if (!message) {
+    message = "Internal error";
+  }
+  if (statusCode >= 500 && /timed out|timeout|aborted/i.test(message)) {
+    statusCode = 504;
+  }
+  return { statusCode, message };
+}
 export function createApp() {
   const settings = getSettings();
   setupLogging(settings.logLevel);
@@ -41,17 +61,11 @@ export function createApp() {
   app.options("/*", async (_request, reply) => reply.code(204).send());
 
   app.setErrorHandler((error, _request, reply) => {
-    if (
-      error instanceof AuthenticationError ||
-      error instanceof AuthorizationError ||
-      error instanceof ConflictError ||
-      error instanceof NotFoundError ||
-      error instanceof ValidationError
-    ) {
-      return reply.code(error.statusCode).send({ error: error.message });
+    const explained = explainError(error);
+    if (explained.statusCode >= 500) {
+      getLogger().error({ err: error }, "unhandled error");
     }
-    getLogger().error({ err: error }, "unhandled error");
-    return reply.code(500).send({ error: "Internal error" });
+    return reply.code(explained.statusCode).send({ error: explained.message });
   });
 
   app.get("/health", async () => ({
@@ -73,6 +87,7 @@ export function createApp() {
   registerPhaseRoutes(app);
   registerTestPlanRoutes(app);
   registerAttachmentRoutes(app);
+  registerLlmRouteRoutes(app);
 
   return app;
 }

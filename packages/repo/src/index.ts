@@ -14,7 +14,6 @@ export {
   applyProposedChanges,
   indexRepository,
   listRepositories,
-  listSymbols,
   readIndexProgress,
   recallCodeNeighborhood,
   registerRepository,

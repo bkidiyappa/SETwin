@@ -64,7 +64,7 @@ import {
   showRequirement,
   updateStory,
 } from "@setwin/requirements";
-import { indexRepository, listRepositories, listSymbols, registerRepository } from "@setwin/repo";
+import { indexRepository, listRepositories, registerRepository } from "@setwin/repo";
 import { analyzeChange, getChangeAnalysis } from "@setwin/change";
 import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
 import {
@@ -951,17 +951,6 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
         io.log(`${row.id}\t${row.path}\t${row.defaultBranch}`);
       }
     });
-  repo
-    .command("symbols")
-    .argument("<repositoryId>")
-    .description("List indexed symbols.")
-    .action(async (repositoryId: string) => {
-      const actor = await requireActor(program);
-      for (const row of await listSymbols(getSettings().databaseUrl, repositoryId, actor)) {
-        io.log(`${row.kind}\t${row.name}\t${row.filePath}`);
-      }
-    });
-
   const change = program.command("change").description("Change intelligence.");
   change
     .command("analyze")
@@ -1158,13 +1147,14 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
   opensecant
     .command("execute")
     .requiredOption("--project <key>", "Project key.")
+    .option("--script <path>", "OpenSecant .test path in the product repo, such as tests/smoke/login-form.test.")
     .option("--scenario <text>", "Scenario name.", collect, [])
-    .description("Execute generated OpenSecant scenarios locally.")
-    .action(async (options: { project: string; scenario: string[] }) => {
+    .description("Run an OpenSecant script from the product repo.")
+    .action(async (options: { project: string; scenario: string[]; script?: string }) => {
       const actor = await requireActor(program);
       const row = await executeGeneratedTests(
         getSettings().databaseUrl,
-        { project: options.project, scenarios: options.scenario.length ? options.scenario : ["default"] },
+        { project: options.project, scriptPath: options.script, scenarios: options.scenario },
         actor,
       );
       io.log(`${row.runId} ${row.status}`);

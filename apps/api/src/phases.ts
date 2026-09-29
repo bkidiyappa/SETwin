@@ -9,7 +9,7 @@ import {
   showRequirement,
   updateStory,
 } from "@setwin/requirements";
-import { indexRepository, listRepositories, listSymbols, readIndexProgress, registerRepository } from "@setwin/repo";
+import { indexRepository, listRepositories, readIndexProgress, registerRepository } from "@setwin/repo";
 import { analyzeChange, getChangeAnalysis } from "@setwin/change";
 import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
 import {
@@ -339,10 +339,6 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
       }
     );
   });
-  app.get("/repos/:id/symbols", async (request) => {
-    const params = request.params as { id: string };
-    return listSymbols(getSettings().databaseUrl, params.id, actorOf(request));
-  });
 
   app.post("/changes/analyze", async (request, reply) => {
     const body = request.body as { repositoryId?: string; baseRef?: string; headRef?: string };
@@ -440,11 +436,15 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     return generateTestsFromArtifact(getSettings().databaseUrl, body as never, actorOf(request));
   });
   app.post("/opensecant/execute", async (request, reply) => {
-    const body = request.body as { project?: string; scenarios?: string[] };
-    if (!body?.project || !body.scenarios) {
-      return reply.code(400).send({ error: "project and scenarios are required" });
+    const body = request.body as { project?: string; scenarios?: string[]; scriptPath?: string };
+    if (!body?.project || (!body.scriptPath && !body.scenarios)) {
+      return reply.code(400).send({ error: "project and scriptPath are required" });
     }
-    return executeGeneratedTests(getSettings().databaseUrl, body as never, actorOf(request));
+    return executeGeneratedTests(
+      getSettings().databaseUrl,
+      { project: body.project, scenarios: body.scenarios, scriptPath: body.scriptPath },
+      actorOf(request),
+    );
   });
   app.post("/opensecant/ingest", async (request, reply) => {
     const body = request.body as { project?: string; results?: unknown[] };

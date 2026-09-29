@@ -290,7 +290,7 @@ main {
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 0.55rem 0.35rem; border-bottom: 1px solid var(--line); font-size: 0.92rem; }
 .muted { color: var(--muted); }
-.error { color: #9f2d2d; }
+.error { color: #9f2d2d; white-space: pre-wrap; }
 input, button, select, textarea {
   font: inherit;
   border-radius: 0.4rem;
@@ -1014,6 +1014,21 @@ button.linkish:hover code {
 }
 .twin-graph-toolbar {
   margin-bottom: 0.45rem;
+  flex-wrap: wrap;
+}
+.twin-graph-search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.twin-graph-search .twin-search {
+  width: 12rem;
+  margin: 0;
+}
+.twin-graph-empty {
+  fill: #5c6b7a;
+  font-size: 16px;
+  font-family: "IBM Plex Sans", sans-serif;
 }
 .twin-card-preview {
   margin: 0.35rem 0 0;
@@ -1295,6 +1310,11 @@ button.linkish:hover code {
 .plan-stats div { min-width: 5.5rem; }
 .plan-stats dt { color: var(--muted); font-size: 0.75rem; }
 .plan-stats dd { margin: 0; font-weight: 600; }
+.plan-lane-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.plan-lane-head h2 { margin: 0; }
+.plan-add { display: flex; gap: 0.5rem; align-items: center; margin: 0.75rem 0; }
+.plan-add select { flex: 1; min-width: 0; }
+.plan-row-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 .plan-history { list-style: none; padding: 0; margin: 0; }
 .plan-history li { padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
 .click-row { cursor: pointer; }

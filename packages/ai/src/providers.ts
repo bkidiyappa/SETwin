@@ -48,7 +48,11 @@ export function createOllamaProvider(): AiProvider {
             model,
             prompt: request.system ? `${request.system}\n\n${request.prompt}` : request.prompt,
             stream: false,
-            options: { temperature: request.temperature ?? 0.2 },
+            ...(request.think === false ? { think: false } : {}),
+            options: {
+              temperature: request.temperature ?? 0.2,
+              ...(request.maxTokens ? { num_predict: request.maxTokens } : {}),
+            },
           },
           {},
           Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 300_000,
@@ -70,8 +74,9 @@ export function createOllamaProvider(): AiProvider {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const minutes = Math.max(1, Math.round(timeoutMs / 60_000));
         const hint = /abort/i.test(message)
-          ? `Ollama timed out after ${timeoutMs}ms (raise SETWIN_OLLAMA_TIMEOUT_MS)`
+          ? `Ollama model ${model} timed out after ${minutes} minute${minutes === 1 ? "" : "s"}. The step was stopped. Raise SETWIN_OLLAMA_TIMEOUT_MS, or choose a faster model for this agent.`
           : message;
         return unavailable("ollama", model, hint);
       }
@@ -167,39 +172,40 @@ export function createBedrockProvider(): AiProvider {
     name: "bedrock",
     isConfigured: () => Boolean(region && process.env.SETWIN_AWS_ACCESS_KEY_ID),
     async complete(request) {
+      const model = request.model ?? modelId;
       if (!region || !process.env.SETWIN_AWS_ACCESS_KEY_ID) {
-        return unavailable("bedrock", modelId, "SETWIN_BEDROCK_REGION / SETWIN_AWS_ACCESS_KEY_ID not configured");
+        return unavailable("bedrock", model, "SETWIN_BEDROCK_REGION / SETWIN_AWS_ACCESS_KEY_ID not configured");
       }
       // Bedrock SigV4 signing is environment-specific; use the OpenAI-compatible proxy URL when provided.
       const proxy = process.env.SETWIN_BEDROCK_PROXY_URL;
       if (!proxy) {
         return unavailable(
           "bedrock",
-          modelId,
+          model,
           "SETWIN_BEDROCK_PROXY_URL required for HTTP access without AWS SDK",
         );
       }
       try {
         const result = await postJson(proxy.replace(/\/$/, "") + "/chat/completions", {
-          model: request.model ?? modelId,
+          model,
           messages: [
             ...(request.system ? [{ role: "system", content: request.system }] : []),
             { role: "user", content: request.prompt },
           ],
         });
         if (!result.ok) {
-          return unavailable("bedrock", modelId, `HTTP ${result.status}`);
+          return unavailable("bedrock", model, `HTTP ${result.status}`);
         }
         const payload = result.json as { choices?: Array<{ message?: { content?: string } }> };
         return {
           provider: "bedrock",
-          model: modelId,
+          model,
           text: payload.choices?.[0]?.message?.content ?? "",
           status: "ok",
           raw: result.json,
         };
       } catch (error) {
-        return unavailable("bedrock", modelId, error instanceof Error ? error.message : String(error));
+        return unavailable("bedrock", model, error instanceof Error ? error.message : String(error));
       }
     },
   };

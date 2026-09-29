@@ -489,6 +489,24 @@ export const testPlanItems = pgTable("test_plan_items", {
   workflowState: text("workflow_state").notNull(),
   lane: text("lane").notNull(),
   content: text("content").notNull().default(""),
+  origin: text("origin").notNull().default("AUTO"),
+});
+
+export const testAutomationLinks = pgTable("test_automation_links", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  artifactKey: text("artifact_key").notNull(),
+  scriptPath: text("script_path").notNull(),
+});
+
+export const testPlanExclusions = pgTable("test_plan_exclusions", {
+  id: uuid("id").primaryKey(),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => testPlans.id),
+  artifactKey: text("artifact_key").notNull(),
 });
 
 export const testPlanChanges = pgTable("test_plan_changes", {

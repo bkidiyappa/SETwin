@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiGet, apiPatch, apiPost } from "../api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api";
 
 type Item = {
   key: string;
@@ -8,6 +8,7 @@ type Item = {
   workflowState: string;
   lane: string;
   automation: string;
+  scriptPath: string | null;
   runStatus: string;
   runFinishedAt: string | null;
 };
@@ -25,6 +26,8 @@ type Plan = {
   totals: { total: number; passed: number; failed: number; skipped: number; notRun: number };
   code: Array<{ key: string; title: string }>;
   items: Item[];
+  available: Array<{ key: string; title: string; workflowState: string }>;
+  scripts: string[];
   revisions: Array<{ id: string; summary: string; at: string; actor: string }>;
 };
 
@@ -41,6 +44,10 @@ export function TestPlanDetailPage() {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState("");
+  const [pick, setPick] = useState("");
+  const [editingKey, setEditingKey] = useState("");
+  const [scriptPick, setScriptPick] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +95,90 @@ export function TestPlanDetailPage() {
       const next = await apiPost<Plan>(`/test-plans/${plan.id}/rebaseline`, {});
       setPlan(next);
       setName(next.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addTest(lane: string): Promise<void> {
+    if (!plan || !pick) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiPost<Plan>(`/test-plans/${plan.id}/items`, { key: pick, lane });
+      setPlan(next);
+      setAdding("");
+      setPick("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function automateTest(key: string): Promise<void> {
+    if (!plan) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiPost<Plan>(`/test-plans/${plan.id}/items/${encodeURIComponent(key)}/automate`, {});
+      setPlan(next);
+      setEditingKey("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveScript(key: string, scriptPath: string): Promise<void> {
+    if (!plan) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiPatch<Plan>(`/test-plans/${plan.id}/items/${encodeURIComponent(key)}/automation`, { scriptPath });
+      setPlan(next);
+      setEditingKey("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runScript(scriptPath: string): Promise<void> {
+    if (!plan) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiPost<Plan>(`/test-plans/${plan.id}/automation/run`, { scriptPath });
+      setPlan(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeTest(key: string): Promise<void> {
+    if (!plan) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiDelete<Plan>(`/test-plans/${plan.id}/items/${encodeURIComponent(key)}`);
+      setPlan(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -160,10 +251,12 @@ export function TestPlanDetailPage() {
             <dt>{plan.kind === "MASTER" ? "Last updated" : "Since"}</dt>
             <dd>{plan.kind === "MASTER" ? new Date(plan.updatedAt).toLocaleString() : new Date(plan.since).toLocaleString()}</dd>
           </div>
-          <div>
-            <dt>Code changes</dt>
-            <dd>{plan.codeChangeCount}</dd>
-          </div>
+          {plan.kind === "MASTER" ? null : (
+            <div>
+              <dt>Code changes</dt>
+              <dd>{plan.codeChangeCount}</dd>
+            </div>
+          )}
           <div>
             <dt>Total</dt>
             <dd>{plan.totals.total}</dd>
@@ -192,7 +285,7 @@ export function TestPlanDetailPage() {
         ) : null}
         </div>
         {plan.kind === "MASTER" ? (
-          <p className="muted">This plan follows the product. Rebaseline refreshes its tests from the current stories, code, and tests.</p>
+          <p className="muted">This is the product test plan. It stays current as stories and tests change. Rebaseline refreshes it.</p>
         ) : plan.status === "RELEASED" ? (
           <p className="muted">Released plans keep their name, window, and tests. Run results still update.</p>
         ) : null}
@@ -200,11 +293,41 @@ export function TestPlanDetailPage() {
 
       {LANES.map((lane) => {
         const rows = plan.items.filter((item) => item.lane === lane.id);
+        const editable = plan.status === "ACTIVE";
         return (
           <section key={lane.id} className="panel">
-            <h2>
-              {lane.title} <span className="muted">({rows.length})</span>
-            </h2>
+            <div className="plan-lane-head">
+              <h2>
+                {lane.title} <span className="muted">({rows.length})</span>
+              </h2>
+              {editable ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setAdding(adding === lane.id ? "" : lane.id);
+                    setPick("");
+                  }}
+                >
+                  Add
+                </button>
+              ) : null}
+            </div>
+            {adding === lane.id ? (
+              <div className="plan-add">
+                <select value={pick} onChange={(event) => setPick(event.target.value)}>
+                  <option value="">Choose a test</option>
+                  {(plan.available ?? []).map((row) => (
+                    <option key={row.key} value={row.key}>
+                      {row.key} — {row.title}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" disabled={busy || !pick} onClick={() => void addTest(lane.id)}>
+                  Add to section
+                </button>
+              </div>
+            ) : null}
             {rows.length === 0 ? (
               <p className="muted">None</p>
             ) : (
@@ -216,6 +339,7 @@ export function TestPlanDetailPage() {
                     <th>State</th>
                     <th>Automation</th>
                     <th>Recent run</th>
+                    {editable ? <th></th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -226,11 +350,62 @@ export function TestPlanDetailPage() {
                       </td>
                       <td>{row.title}</td>
                       <td>{row.workflowState}</td>
-                      <td>{row.automation}</td>
+                      <td>
+                        <div>{row.automation}</div>
+                        {row.scriptPath ? <div className="muted">{row.scriptPath}</div> : null}
+                        {plan.kind === "MASTER" && editingKey === row.key ? (
+                          <div className="plan-add">
+                            <select value={scriptPick} onChange={(event) => setScriptPick(event.target.value)}>
+                              <option value="">Choose a script</option>
+                              {(plan.scripts ?? []).map((script) => (
+                                <option key={script} value={script}>
+                                  {script}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="button" disabled={busy || !scriptPick} onClick={() => void saveScript(row.key, scriptPick)}>
+                              Save
+                            </button>
+                            <button type="button" disabled={busy} onClick={() => void saveScript(row.key, "")}>
+                              Clear
+                            </button>
+                          </div>
+                        ) : null}
+                      </td>
                       <td>
                         {runLabel(row.runStatus)}
                         {row.runFinishedAt ? <span className="muted"> · {new Date(row.runFinishedAt).toLocaleString()}</span> : null}
                       </td>
+                      {editable ? (
+                        <td className="plan-row-actions">
+                          {plan.kind === "MASTER" ? (
+                            row.scriptPath ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setEditingKey(editingKey === row.key ? "" : row.key);
+                                    setScriptPick(row.scriptPath ?? "");
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                                <button type="button" disabled={busy} onClick={() => void runScript(row.scriptPath!)}>
+                                  Run
+                                </button>
+                              </>
+                            ) : (
+                              <button type="button" disabled={busy} onClick={() => void automateTest(row.key)}>
+                                Automate
+                              </button>
+                            )
+                          ) : null}
+                          <button type="button" disabled={busy} onClick={() => void removeTest(row.key)}>
+                            Remove
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </tbody>
@@ -240,20 +415,22 @@ export function TestPlanDetailPage() {
         );
       })}
 
-      <section className="panel">
-        <h2>Code in this window</h2>
-        {plan.code.length === 0 ? (
-          <p className="muted">No code artifacts changed in this window.</p>
-        ) : (
-          <ul>
-            {plan.code.map((row) => (
-              <li key={row.key}>
-                <code>{row.key}</code> {row.title}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {plan.kind === "MASTER" ? null : (
+        <section className="panel">
+          <h2>Code in this window</h2>
+          {plan.code.length === 0 ? (
+            <p className="muted">No code artifacts changed in this window.</p>
+          ) : (
+            <ul>
+              {plan.code.map((row) => (
+                <li key={row.key}>
+                  <code>{row.key}</code> {row.title}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section className="panel">
         <h2>History</h2>

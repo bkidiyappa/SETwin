@@ -35,7 +35,9 @@ import {
   roles,
   teamMembers,
   teams,
+  testAutomationLinks,
   testPlanChanges,
+  testPlanExclusions,
   testPlanItems,
   testPlanRevisions,
   testPlans,
@@ -582,6 +584,24 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
         content text NOT NULL DEFAULT ''
       )
     `;
+    await client.sql`ALTER TABLE test_plan_items ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'AUTO'`;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_automation_links (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        artifact_key text NOT NULL,
+        script_path text NOT NULL,
+        UNIQUE (project_id, artifact_key)
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_plan_exclusions (
+        id uuid PRIMARY KEY,
+        plan_id uuid NOT NULL REFERENCES test_plans(id),
+        artifact_key text NOT NULL,
+        UNIQUE (plan_id, artifact_key)
+      )
+    `;
     await client.sql`
       CREATE TABLE IF NOT EXISTS test_plan_changes (
         id uuid PRIMARY KEY,
@@ -728,7 +748,9 @@ export {
   setwinMeta,
   teamMembers,
   teams,
+  testAutomationLinks,
   testPlanChanges,
+  testPlanExclusions,
   testPlanItems,
   testPlanRevisions,
   testPlans,

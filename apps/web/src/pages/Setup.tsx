@@ -24,14 +24,6 @@ type Repository = {
   projectKey?: string;
 };
 
-type SymbolRow = {
-  id: string;
-  filePath: string;
-  language: string;
-  kind: string;
-  name: string;
-};
-
 type Project = {
   key: string;
   name: string;
@@ -99,8 +91,6 @@ export function SetupPage() {
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [path, setPath] = useState("");
-  const [selectedId, setSelectedId] = useState("");
-  const [symbols, setSymbols] = useState<SymbolRow[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -188,8 +178,6 @@ export function SetupPage() {
     const selected = projects.find((row) => row.key === project);
     setTechStackDraft(selected?.techStack?.trim() || DEFAULT_TECH_STACK);
     setEditingKey("");
-    setSelectedId("");
-    setSymbols([]);
   }, [project, projects, loadFeatures, loadRepos]);
 
   async function createProject(): Promise<void> {
@@ -350,7 +338,6 @@ export function SetupPage() {
       setMessage(`Registered ${row.path} for ${project}`);
       setPath("");
       await loadRepos(project);
-      setSelectedId(row.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -390,9 +377,6 @@ export function SetupPage() {
       const result = await apiPost<{ symbols: number; edges: number; files: number; commit: string }>(`/repos/${id}/index`, {});
       setMessage(`Indexed ${result.files} files, ${result.symbols} symbols, ${result.edges} edges at ${result.commit.slice(0, 7)}`);
       await loadRepos(project);
-      const rows = await apiGet<SymbolRow[]>(`/repos/${id}/symbols`);
-      setSelectedId(id);
-      setSymbols(rows.slice(0, 100));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -402,20 +386,6 @@ export function SetupPage() {
         delete next[id];
         return next;
       });
-    }
-  }
-
-  async function showSymbols(id: string): Promise<void> {
-    setBusy(true);
-    setError("");
-    try {
-      const rows = await apiGet<SymbolRow[]>(`/repos/${id}/symbols`);
-      setSelectedId(id);
-      setSymbols(rows.slice(0, 100));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -705,9 +675,6 @@ export function SetupPage() {
                           Index
                         </button>
                       ) : null}
-                      <button type="button" disabled={busy} onClick={() => void showSymbols(row.id)}>
-                        Symbols
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -720,34 +687,142 @@ export function SetupPage() {
         ) : null}
       </div>
 
-      {selectedId ? (
-        <div className="panel">
-          <h2>Symbols {symbols.length > 0 ? `(showing ${symbols.length})` : ""}</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Kind</th>
-                <th>Name</th>
-                <th>Language</th>
-                <th>File</th>
+      <AgentModels isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  ollama: "Local (Ollama)",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  bedrock: "Amazon Bedrock",
+  azure: "Azure OpenAI",
+  gemini: "Gemini",
+};
+
+const MODEL_HINTS: Record<string, string> = {
+  requirements: "gpt-4o",
+  architecture: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+  coding: "qwen2.5:7b",
+  tests: "amazon.nova-pro-v1:0",
+};
+
+function AgentModels({ isAdmin }: { isAdmin: boolean }) {
+  const [agents, setAgents] = useState<Array<{ id: string; label: string; hint: string }>>([]);
+  const [providers, setProviders] = useState<string[]>([]);
+  const [routes, setRoutes] = useState<Array<{ agent: string; provider: string; model: string }>>([]);
+  const [localError, setLocalError] = useState("");
+  const [localMessage, setLocalMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin || !getToken()) {
+      return;
+    }
+    let cancelled = false;
+    void apiGet<{
+      agents: Array<{ id: string; label: string; hint: string }>;
+      providers: string[];
+      routes: Array<{ agent: string; provider: string; model: string }>;
+    }>("/llm/routes")
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setAgents(payload.agents);
+        setProviders(payload.providers);
+        setRoutes(payload.routes);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setLocalError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
+
+  function patchRoute(agent: string, patch: Partial<{ provider: string; model: string }>): void {
+    setRoutes((current) => current.map((row) => (row.agent === agent ? { ...row, ...patch } : row)));
+  }
+
+  async function saveRoutes(): Promise<void> {
+    setSaving(true);
+    setLocalError("");
+    setLocalMessage("");
+    try {
+      const saved = await apiPost<{ routes: Array<{ agent: string; provider: string; model: string }> }>("/llm/routes", {
+        routes,
+      });
+      setRoutes(saved.routes);
+      setLocalMessage("Agent models saved.");
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!isAdmin) {
+    return null;
+  }
+
+  return (
+    <div className="panel" style={{ marginTop: "1rem" }}>
+      <h2>Agent models</h2>
+      <p className="muted">
+        Each agent can use the same model or a different one. Requirements can use OpenAI, architecture a Bedrock Claude
+        model, coding a local Ollama model, and tests a Bedrock Nova model. Leave an agent on Default chain to follow
+        the Default row, or the built-in order when Default is empty. API keys and endpoints stay in the environment.
+      </p>
+      {localError ? <p className="error">{localError}</p> : null}
+      {localMessage ? <p>{localMessage}</p> : null}
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Provider</th>
+            <th>Model</th>
+          </tr>
+        </thead>
+        <tbody>
+          {routes.map((row) => {
+            const meta = agents.find((agent) => agent.id === row.agent);
+            return (
+              <tr key={row.agent}>
+                <td>
+                  {meta?.label ?? row.agent}
+                  {meta?.hint ? <div className="muted">{meta.hint}</div> : null}
+                </td>
+                <td>
+                  <select value={row.provider} onChange={(event) => patchRoute(row.agent, { provider: event.target.value })}>
+                    <option value="">Default chain</option>
+                    {providers.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {PROVIDER_LABELS[provider] ?? provider}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <input
+                    value={row.model}
+                    placeholder={MODEL_HINTS[row.agent] ?? "provider default"}
+                    onChange={(event) => patchRoute(row.agent, { model: event.target.value })}
+                  />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {symbols.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.kind}</td>
-                  <td>{row.name}</td>
-                  <td>{row.language}</td>
-                  <td>
-                    <code>{row.filePath}</code>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {symbols.length === 0 ? <p className="muted">Index this repository to populate symbols.</p> : null}
-        </div>
-      ) : null}
+            );
+          })}
+        </tbody>
+      </table>
+      <div className="toolbar" style={{ marginTop: "0.75rem" }}>
+        <button type="button" disabled={saving || routes.length === 0} onClick={() => void saveRoutes()}>
+          Save agent models
+        </button>
+      </div>
     </div>
   );
 }

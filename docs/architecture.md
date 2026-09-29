@@ -75,6 +75,10 @@ Design attachments: `POST /artifacts/:key/attachments` (base64 file or reference
 
 ### 5. Twin Explorer (traceability UI)
 
+Step-by-step use is in [Getting started](getting-started.md). The graph itself:
+
+![Twin Explorer node graph](images/twin-explorer.png)
+
 Layout:
 
 1. **Product** dropdown (top).
@@ -83,6 +87,7 @@ Layout:
    - Node size reflects connection count.
    - **Zoom in** (`+`, scroll up) reveals titles, then type/state. **Zoom out** shows a compact map.
    - Drag to pan. **Expand ↗** opens the graph in a modal; **Collapse** returns to the pane (selection/zoom kept).
+   - **Search** keeps nodes whose key, title, type, or text matches, and the edges between those nodes.
 3. Three searchable cards: **Requirements · Code/Design · Tests**.
    - With **no selection**: each card lists all artifacts of that family for the product.
    - **Click a node** (or a card row): cards refresh to only **connected** artifacts (transitive closure over relationship edges). Banner shows counts.

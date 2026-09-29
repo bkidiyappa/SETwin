@@ -16,6 +16,7 @@
     "@setwin/config": "workspace:*",
     "@setwin/context": "workspace:*",
     "@setwin/core": "workspace:*",
+    "@setwin/database": "workspace:*",
     "@setwin/integrations": "workspace:*",
     "@setwin/opensecant": "workspace:*",
     "@setwin/openvector": "workspace:*",

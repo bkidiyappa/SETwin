@@ -1,11 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { createOllamaProvider, extractJsonObject, requireAiCompletion, routeProviders, stripModelReasoning } from "./index.ts";
+import {
+  agentForRequest,
+  createOllamaProvider,
+  extractJsonObject,
+  mergeLlmRoutes,
+  parseLlmRouteSpec,
+  requireAiCompletion,
+  resolveAgentAssignment,
+  routeProviders,
+  stripModelReasoning,
+} from "./index.ts";
 import { formatDuration, formatLlmExchange } from "./llm-log.ts";
 
 describe("ai gateway", () => {
   it("routes sensitive tasks to local/enterprise providers first", () => {
     expect(routeProviders("sensitive")[0]).toBe("ollama");
     expect(routeProviders("gherkin.generate", "anthropic")[0]).toBe("anthropic");
+  });
+
+  it("assigns a different model to each agent and lets others share the default", () => {
+    const routes = parseLlmRouteSpec(
+      "default=openai:gpt-4o-mini,requirements=openai:gpt-4o,architecture=bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0,coding=ollama:qwen2.5:7b,tests=bedrock:amazon.nova-pro-v1:0",
+    );
+    expect(routes.coding).toEqual({ provider: "ollama", model: "qwen2.5:7b" });
+    expect(routes.architecture.model).toBe("anthropic.claude-3-5-sonnet-20241022-v2:0");
+    expect(resolveAgentAssignment("tests", routes)?.model).toBe("amazon.nova-pro-v1:0");
+    expect(resolveAgentAssignment("security", routes)?.provider).toBe("openai");
+    expect(agentForRequest({ task: "story.split" })).toBe("requirements");
+    expect(agentForRequest({ task: "artifact.code" })).toBe("coding");
+    const cleared = mergeLlmRoutes(routes, [{ agent: "coding", provider: "", model: "" }]);
+    expect(cleared.coding).toBeUndefined();
+    expect(resolveAgentAssignment("coding", cleared)?.model).toBe("gpt-4o-mini");
   });
 
   it("returns unavailable when ollama is down", async () => {

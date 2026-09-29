@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   ConflictError,
   NotFoundError,
@@ -11,7 +13,10 @@ import {
   artifactVersions,
   artifacts,
   projects,
+  codeRepositories,
+  testAutomationLinks,
   testPlanChanges,
+  testPlanExclusions,
   testPlanItems,
   testPlanRevisions,
   testPlans,
@@ -64,6 +69,37 @@ export type ClassifiedPlan = {
   code: Array<{ key: string; title: string }>;
   items: ClassifiedItem[];
 };
+
+const LANE_LABELS: Record<PlanLane, string> = {
+  critical_functional: "Critical path, functional",
+  critical_nonfunctional: "Critical path, non-functional",
+  regression_functional: "Regression, functional",
+  regression_nonfunctional: "Regression, non-functional",
+};
+
+export function mergePlanItems(classified: ClassifiedItem[], manual: ClassifiedItem[], excludedKeys: string[]): ClassifiedItem[] {
+  const excluded = new Set(excludedKeys.map((key) => key.toUpperCase()));
+  const manualByKey = new Map(manual.map((row) => [row.key.toUpperCase(), row]));
+  const merged: ClassifiedItem[] = [];
+  const seen = new Set<string>();
+  for (const row of classified) {
+    const key = row.key.toUpperCase();
+    if (excluded.has(key)) {
+      continue;
+    }
+    merged.push(manualByKey.get(key) ?? row);
+    seen.add(key);
+  }
+  for (const row of manual) {
+    const key = row.key.toUpperCase();
+    if (excluded.has(key) || seen.has(key)) {
+      continue;
+    }
+    merged.push(row);
+    seen.add(key);
+  }
+  return merged.sort((a, b) => a.key.localeCompare(b.key));
+}
 
 export function extractSourcePaths(content: string): string[] {
   const found = new Set<string>();
@@ -306,17 +342,18 @@ export type TestPlanTotals = {
 };
 
 export function summarizeRuns(
-  items: Array<{ key: string; title: string; content: string }>,
+  items: Array<{ key: string; title: string; content: string; scriptPath?: string | null }>,
   runs: Array<{ name: string; status: string; adapter: string; finishedAt: Date | null; startedAt: Date }>,
 ): { totals: TestPlanTotals; byKey: Map<string, TestRunSnapshot> } {
   const byKey = new Map<string, TestRunSnapshot>();
   const totals: TestPlanTotals = { total: items.length, passed: 0, failed: 0, skipped: 0, notRun: 0 };
   for (const item of items) {
     const matches = runs
-      .filter((row) => namesMatch(row.name, item.key, item.title))
+      .filter((row) => namesMatch(row.name, item.key, item.title, item.scriptPath))
       .sort((a, b) => timeOf(b) - timeOf(a));
     const latest = matches[0];
     const automated =
+      Boolean(item.scriptPath) ||
       AUTOMATED_TAG.test(item.content) ||
       matches.some((row) => (AUTOMATION_ADAPTERS as readonly string[]).includes(row.adapter));
     const status = latest ? normalizeStatus(latest.status) : "not_run";
@@ -333,9 +370,17 @@ export function summarizeRuns(
   return { totals, byKey };
 }
 
-function namesMatch(resultName: string, key: string, title: string): boolean {
+function namesMatch(resultName: string, key: string, title: string, scriptPath?: string | null): boolean {
   const name = resultName.trim().toLowerCase();
-  return name === key.trim().toLowerCase() || name === title.trim().toLowerCase();
+  if (name === key.trim().toLowerCase() || name === title.trim().toLowerCase()) {
+    return true;
+  }
+  const script = (scriptPath ?? "").replaceAll("\\", "/").trim().toLowerCase();
+  if (!script) {
+    return false;
+  }
+  const base = script.split("/").pop() ?? script;
+  return name === script || name === script.replace(/\.test$/, "") || name === base || name === base.replace(/\.test$/, "");
 }
 
 function timeOf(row: { finishedAt: Date | null; startedAt: Date }): number {
@@ -383,11 +428,23 @@ export async function listTestPlans(
       .select()
       .from(testPlanItems)
       .where(inArray(testPlanItems.planId, visible.map((row) => row.id)));
-    const runs = await loadRuns(db, [...new Set(visible.map((row) => row.projectId))]);
+    const projectIds = [...new Set(visible.map((row) => row.projectId))];
+    const links = await db.select().from(testAutomationLinks).where(inArray(testAutomationLinks.projectId, projectIds));
+    const linkByProject = new Map<string, Map<string, string>>();
+    for (const link of links) {
+      const byKey = linkByProject.get(link.projectId) ?? new Map<string, string>();
+      byKey.set(link.artifactKey.toUpperCase(), link.scriptPath.replaceAll("\\", "/"));
+      linkByProject.set(link.projectId, byKey);
+    }
+    const runs = await loadRuns(db, projectIds);
     const rows = visible.map((plan) => {
       const project = projectById.get(plan.projectId);
       const planItems = items.filter((row) => row.planId === plan.id);
-      const { totals } = summarizeRuns(planItems.map(itemView), runs.get(plan.projectId) ?? []);
+      const byKey = linkByProject.get(plan.projectId);
+      const { totals } = summarizeRuns(
+        planItems.map((row) => ({ ...itemView(row), scriptPath: byKey?.get(row.artifactKey.toUpperCase()) ?? null })),
+        runs.get(plan.projectId) ?? [],
+      );
       return {
         id: plan.id,
         name: plan.name,
@@ -455,8 +512,26 @@ export async function getTestPlan(databaseUrl: string, id: string, actor?: Princ
         lane: row.lane as PlanLane,
       };
     });
+    const links = await db.select().from(testAutomationLinks).where(eq(testAutomationLinks.projectId, plan.projectId));
+    const linkByKey = new Map(links.map((row) => [row.artifactKey.toUpperCase(), row.scriptPath.replaceAll("\\", "/")]));
+    const withScripts = decorated.map((row) => ({
+      ...row,
+      scriptPath: linkByKey.get(row.key.toUpperCase()) ?? null,
+    }));
+    const repos = await db.select().from(codeRepositories).where(eq(codeRepositories.projectId, plan.projectId));
+    const scripts = [...new Set((await Promise.all(repos.map((row) => listOpenSecantScripts(row.path)))).flat())].sort();
     const runs = await loadRuns(db, [plan.projectId]);
-    const { totals, byKey } = summarizeRuns(decorated, runs.get(plan.projectId) ?? []);
+    const { totals, byKey } = summarizeRuns(withScripts, runs.get(plan.projectId) ?? []);
+    const onPlan = new Set(withScripts.map((row) => row.key.toUpperCase()));
+    const candidates = await db
+      .select({ key: artifacts.key, title: artifactVersions.title, workflowState: artifactVersions.workflowState })
+      .from(artifacts)
+      .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+      .where(and(eq(artifacts.projectId, plan.projectId), inArray(artifacts.type, ["TEST", "GHERKIN"]), isNull(artifacts.deletedAt)));
+    const available = candidates
+      .filter((row) => !onPlan.has(row.key.toUpperCase()))
+      .map((row) => ({ key: row.key, title: row.title, workflowState: row.workflowState }))
+      .sort((a, b) => a.key.localeCompare(b.key));
     return {
       id: plan.id,
       name: plan.name,
@@ -471,7 +546,7 @@ export async function getTestPlan(databaseUrl: string, id: string, actor?: Princ
       releasedAt: plan.releasedAt?.toISOString() ?? null,
       totals,
       code: changes.map((row) => ({ key: row.artifactKey, title: row.title })),
-      items: decorated.map((row) => {
+      items: withScripts.map((row) => {
         const run = byKey.get(row.key.toUpperCase());
         return {
           key: row.key,
@@ -479,10 +554,13 @@ export async function getTestPlan(databaseUrl: string, id: string, actor?: Princ
           workflowState: row.workflowState,
           lane: row.lane,
           automation: run?.automated ? "Automated" : "Manual",
+          scriptPath: row.scriptPath,
           runStatus: run?.status ?? "not_run",
           runFinishedAt: run?.finishedAt ?? null,
         };
       }),
+      scripts,
+      available,
       revisions: revisions.map((row) => ({
         id: row.id,
         summary: row.summary,
@@ -697,8 +775,24 @@ export async function rebaselineMasterTestPlan(
   const currentItems = await withDatabase(databaseUrl, async ({ db }) => {
     const items = await db.select().from(testPlanItems).where(eq(testPlanItems.planId, plan.id));
     const changes = await db.select().from(testPlanChanges).where(eq(testPlanChanges.planId, plan.id));
-    return { items, changes };
+    const exclusions = await db.select().from(testPlanExclusions).where(eq(testPlanExclusions.planId, plan.id));
+    return { items, changes, exclusions };
   });
+  const manual = currentItems.items
+    .filter((row) => row.origin === "MANUAL")
+    .map((row) => ({
+      key: row.artifactKey,
+      title: row.title,
+      workflowState: row.workflowState,
+      content: row.content,
+      lane: row.lane as PlanLane,
+    }));
+  const merged = mergePlanItems(
+    classified.items,
+    manual,
+    currentItems.exclusions.map((row) => row.artifactKey),
+  );
+  const manualKeys = new Set(manual.map((row) => row.key.toUpperCase()));
   const before = planFingerprint(
     plan.name,
     currentItems.items.map((row) => ({
@@ -712,7 +806,7 @@ export async function rebaselineMasterTestPlan(
   );
   const after = planFingerprint(
     name,
-    classified.items.map((row) => ({
+    merged.map((row) => ({
       key: row.key,
       lane: row.lane,
       title: row.title,
@@ -728,9 +822,9 @@ export async function rebaselineMasterTestPlan(
   await withDatabase(databaseUrl, async ({ db }) => {
     await db.delete(testPlanItems).where(eq(testPlanItems.planId, plan.id));
     await db.delete(testPlanChanges).where(eq(testPlanChanges.planId, plan.id));
-    if (classified.items.length) {
+    if (merged.length) {
       await db.insert(testPlanItems).values(
-        classified.items.map((row) => ({
+        merged.map((row) => ({
           id: randomUUID(),
           planId: plan.id,
           artifactKey: row.key,
@@ -738,6 +832,7 @@ export async function rebaselineMasterTestPlan(
           workflowState: row.workflowState,
           lane: row.lane,
           content: row.content,
+          origin: manualKeys.has(row.key.toUpperCase()) ? "MANUAL" : "AUTO",
         })),
       );
     }
@@ -760,8 +855,8 @@ export async function rebaselineMasterTestPlan(
       planId: plan.id,
       actorId: principal.id,
       summary: options?.touch
-        ? `Rebaselined with ${classified.items.length} tests`
-        : `Updated from the product with ${classified.items.length} tests`,
+        ? `Rebaselined with ${merged.length} tests`
+        : `Updated from the product with ${merged.length} tests`,
       createdAt: now,
     });
   });
@@ -819,6 +914,166 @@ async function insertMasterPlan(
   return row;
 }
 
+function isPlanLane(value: string): value is PlanLane {
+  return (PLAN_LANES as readonly string[]).includes(value);
+}
+
+async function requireEditablePlan(databaseUrl: string, id: string, actor?: Principal) {
+  const principal = await requirePermission(databaseUrl, actor, "artifact:create");
+  const plan = await withDatabase(databaseUrl, async ({ db }) => {
+    const row = (await db.select().from(testPlans).where(eq(testPlans.id, id)))[0];
+    if (!row) {
+      throw new NotFoundError("Test plan not found");
+    }
+    return row;
+  });
+  if (plan.status === "RELEASED") {
+    throw new ConflictError("A released test plan is locked");
+  }
+  return { principal, plan };
+}
+
+export async function addTestPlanItem(
+  databaseUrl: string,
+  id: string,
+  input: { key: string; lane: string },
+  actor?: Principal,
+) {
+  const { principal, plan } = await requireEditablePlan(databaseUrl, id, actor);
+  const key = input.key.trim();
+  if (!key) {
+    throw new ValidationError("A test is required");
+  }
+  if (!isPlanLane(input.lane)) {
+    throw new ValidationError("Choose a section");
+  }
+  const lane = input.lane;
+  const artifact = await withDatabase(databaseUrl, async ({ db }) => {
+    const row = (
+      await db
+        .select({
+          key: artifacts.key,
+          type: artifacts.type,
+          projectId: artifacts.projectId,
+          title: artifactVersions.title,
+          content: artifactVersions.content,
+          workflowState: artifactVersions.workflowState,
+        })
+        .from(artifacts)
+        .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+        .where(and(eq(artifacts.key, key), isNull(artifacts.deletedAt)))
+    )[0];
+    return row;
+  });
+  if (!artifact || artifact.projectId !== plan.projectId || !TEST_TYPES.has(artifact.type)) {
+    throw new NotFoundError(`Test not found: ${key}`);
+  }
+  const now = new Date();
+  await withDatabase(databaseUrl, async ({ db }) => {
+    await db
+      .delete(testPlanExclusions)
+      .where(and(eq(testPlanExclusions.planId, plan.id), eq(testPlanExclusions.artifactKey, artifact.key)));
+    const existing = (
+      await db
+        .select()
+        .from(testPlanItems)
+        .where(and(eq(testPlanItems.planId, plan.id), eq(testPlanItems.artifactKey, artifact.key)))
+    )[0];
+    if (existing?.lane === lane) {
+      if (existing.origin !== "MANUAL") {
+        await db
+          .update(testPlanItems)
+          .set({
+            title: artifact.title,
+            workflowState: artifact.workflowState,
+            content: artifact.content,
+            origin: "MANUAL",
+          })
+          .where(eq(testPlanItems.id, existing.id));
+      }
+      return;
+    }
+    const summary = existing
+      ? `Moved ${artifact.key} to ${LANE_LABELS[lane]}`
+      : `Added ${artifact.key} to ${LANE_LABELS[lane]}`;
+    if (existing) {
+      await db
+        .update(testPlanItems)
+        .set({
+          lane,
+          title: artifact.title,
+          workflowState: artifact.workflowState,
+          content: artifact.content,
+          origin: "MANUAL",
+        })
+        .where(eq(testPlanItems.id, existing.id));
+    } else {
+      await db.insert(testPlanItems).values({
+        id: randomUUID(),
+        planId: plan.id,
+        artifactKey: artifact.key,
+        title: artifact.title,
+        workflowState: artifact.workflowState,
+        lane,
+        content: artifact.content,
+        origin: "MANUAL",
+      });
+    }
+    await db.update(testPlans).set({ updatedAt: now }).where(eq(testPlans.id, plan.id));
+    await db.insert(testPlanRevisions).values({
+      id: randomUUID(),
+      planId: plan.id,
+      actorId: principal.id,
+      summary,
+      createdAt: now,
+    });
+  });
+  return getTestPlan(databaseUrl, plan.id, principal);
+}
+
+export async function removeTestPlanItem(databaseUrl: string, id: string, key: string, actor?: Principal) {
+  const { principal, plan } = await requireEditablePlan(databaseUrl, id, actor);
+  const artifactKey = key.trim();
+  if (!artifactKey) {
+    throw new ValidationError("A test is required");
+  }
+  const now = new Date();
+  await withDatabase(databaseUrl, async ({ db }) => {
+    const existing = (
+      await db
+        .select()
+        .from(testPlanItems)
+        .where(and(eq(testPlanItems.planId, plan.id), eq(testPlanItems.artifactKey, artifactKey)))
+    )[0];
+    if (!existing) {
+      throw new NotFoundError(`Test not on this plan: ${artifactKey}`);
+    }
+    await db.delete(testPlanItems).where(eq(testPlanItems.id, existing.id));
+    const excluded = (
+      await db
+        .select()
+        .from(testPlanExclusions)
+        .where(and(eq(testPlanExclusions.planId, plan.id), eq(testPlanExclusions.artifactKey, existing.artifactKey)))
+    )[0];
+    if (!excluded) {
+      await db.insert(testPlanExclusions).values({
+        id: randomUUID(),
+        planId: plan.id,
+        artifactKey: existing.artifactKey,
+      });
+    }
+    await db.update(testPlans).set({ updatedAt: now }).where(eq(testPlans.id, plan.id));
+    await db.insert(testPlanRevisions).values({
+      id: randomUUID(),
+      planId: plan.id,
+      actorId: principal.id,
+      summary: `Removed ${existing.artifactKey}`,
+      createdAt: now,
+    });
+  });
+  return getTestPlan(databaseUrl, plan.id, principal);
+}
+
 function planFingerprint(
   name: string,
   items: Array<{ key: string; lane: string; title: string; workflowState: string; content: string }>,
@@ -841,6 +1096,29 @@ function isUniqueViolation(error: unknown): boolean {
     return isUniqueViolation((error as { cause?: unknown }).cause);
   }
   return false;
+}
+
+async function listOpenSecantScripts(repoPath: string): Promise<string[]> {
+  const root = path.join(repoPath, "tests");
+  const found: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolute);
+      } else if (entry.name.endsWith(".test")) {
+        found.push(path.relative(repoPath, absolute).replaceAll("\\", "/"));
+      }
+    }
+  }
+  await walk(root);
+  return found;
 }
 
 function itemView(row: { artifactKey: string; title: string; content: string }) {

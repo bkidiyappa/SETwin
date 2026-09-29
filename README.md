@@ -8,6 +8,8 @@
 
 SETwin is not another IDE, coding assistant, Jira, GitHub, or CI system. It owns engineering knowledge, traceability, workflow, governance, and approval. It works with the LLMs, coding agents, IDEs, and engineering systems an organization already uses.
 
+![Dashboard for a product in progress](docs/images/dashboard.png)
+
 See [PLAN.md](PLAN.md) for the full product and engineering plan.
 
 ## Current status

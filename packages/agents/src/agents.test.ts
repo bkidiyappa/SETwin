@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseWorkSteps } from "./work-steps.ts";
 import {
   CODING_AGENTS,
   SCRUM_ROLES,
@@ -12,6 +13,17 @@ import {
 } from "./index.ts";
 
 describe("agents", () => {
+  it("reads a short step list from a model plan", () => {
+    const steps = parseWorkSteps(
+      'Sure.\n{"steps":[{"title":"Valid login","intent":"User reaches the dashboard"},{"title":"Empty fields","intent":"Required fields show errors"}]}',
+    );
+    expect(steps).toEqual([
+      { title: "Valid login", intent: "User reaches the dashboard" },
+      { title: "Empty fields", intent: "Required fields show errors" },
+    ]);
+    expect(parseWorkSteps("no json here")).toEqual([]);
+  });
+
   it("exposes all scrum roles and coding agents", () => {
     expect(SCRUM_ROLES).toContain("product_owner");
     expect(SCRUM_ROLES).toContain("reviewer");

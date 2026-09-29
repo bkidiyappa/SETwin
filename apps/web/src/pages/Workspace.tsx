@@ -947,6 +947,10 @@ export function WorkspacePage() {
       setError("Story must be APPROVED before advancing to Design.");
       return;
     }
+    if (storyDesignIsDone(story)) {
+      setError("Design is already approved for this story.");
+      return;
+    }
     if (!canEditStage("design", session)) {
       setError("Architect role (or admin) required.");
       return;
@@ -1047,6 +1051,9 @@ export function WorkspacePage() {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
       pushLog(message, "error");
+      if (project) {
+        await loadPipeline(project);
+      }
     } finally {
       setBusy(false);
     }
@@ -1456,10 +1463,11 @@ export function WorkspacePage() {
           {stage === "story" && state === "APPROVED" ? (
             <button
               type="button"
-              disabled={busy || !canEditStage("design", session)}
+              disabled={busy || storyDesignIsDone(row) || !canEditStage("design", session)}
+              title={storyDesignIsDone(row) ? "Design is already approved" : undefined}
               onClick={() => void advanceDesignForStory(row)}
             >
-              → Design
+              {storyDesignIsDone(row) ? "Design approved" : "→ Design"}
             </button>
           ) : null}
           {stage === "design" && state === "APPROVED" ? (

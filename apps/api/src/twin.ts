@@ -11,10 +11,13 @@ import {
   createArtifact,
   createArtifactVersion,
   createProject,
+  ensureMasterTestPlans,
   createRelationship,
   getArtifact,
+  getArtifactAbout,
   getProject,
   listArtifacts,
+  listProjectDashboard,
   listProjects,
   listRelationships,
   updateProject,
@@ -25,6 +28,10 @@ function actorOf(request: FastifyRequest): Principal | undefined {
 }
 
 export function registerTwinRoutes(app: FastifyInstance): void {
+  app.get("/dashboard", async (request) => ({
+    products: await listProjectDashboard(getSettings().databaseUrl, actorOf(request)),
+  }));
+
   app.get("/projects", async (request) => listProjects(getSettings().databaseUrl, actorOf(request)));
 
   app.post("/projects", async (request, reply) => {
@@ -32,11 +39,17 @@ export function registerTwinRoutes(app: FastifyInstance): void {
     if (!body?.key) {
       return reply.code(400).send({ error: "key is required" });
     }
-    return createProject(
-      getSettings().databaseUrl,
+    const actor = actorOf(request);
+    const databaseUrl = getSettings().databaseUrl;
+    const created = await createProject(
+      databaseUrl,
       { key: body.key, name: body.name, description: body.description, techStack: body.techStack },
-      actorOf(request),
+      actor,
     );
+    if (actor) {
+      await ensureMasterTestPlans(databaseUrl, actor);
+    }
+    return created;
   });
 
   app.patch("/projects/:key", async (request, reply) => {
@@ -82,6 +95,11 @@ export function registerTwinRoutes(app: FastifyInstance): void {
       },
       actorOf(request),
     );
+  });
+
+  app.get("/artifacts/:key/about", async (request) => {
+    const params = request.params as { key: string };
+    return getArtifactAbout(getSettings().databaseUrl, params.key, actorOf(request));
   });
 
   app.get("/artifacts/:key", async (request) => {

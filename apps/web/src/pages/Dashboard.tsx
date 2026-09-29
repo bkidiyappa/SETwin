@@ -1,172 +1,125 @@
 import { useEffect, useState } from "react";
-import {
-  apiGet,
-  apiPost,
-  clearToken,
-  getSessionUser,
-  getToken,
-  setSessionUser,
-  setToken,
-  type LoginResult,
-} from "../api";
+import { Link } from "react-router-dom";
+import { apiGet } from "../api";
+import { BrainLoader } from "../components/BrainLoader";
 
-type Status = {
+type ProductStats = {
+  key: string;
   name: string;
-  version: string;
-  databaseReachable: boolean;
-  initialized: boolean;
+  description: string;
+  features: number;
+  repositories: number;
+  stories: number;
+  implementedStories: number;
+  storiesInReview: number;
+  designs: number;
+  designsApproved: number;
+  code: number;
+  codeApproved: number;
+  tests: number;
+  testsApproved: number;
+  testsInReview: number;
 };
 
 export function DashboardPage() {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [token, setTokenInput] = useState(getToken());
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("");
-  const [sessionUser, setSessionLabel] = useState(getSessionUser()?.username ?? "");
-  const [sessionRoles, setSessionRoles] = useState((getSessionUser()?.roles ?? []).join(", "));
-  const [message, setMessage] = useState("");
+  const [products, setProducts] = useState<ProductStats[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
-    apiGet<Status>("/status")
-      .then(setStatus)
-      .catch((err: Error) => setError(err.message));
+    let cancelled = false;
+    async function load(): Promise<void> {
+      setError("");
+      try {
+        const dashboard = await apiGet<{ products: ProductStats[] }>("/dashboard");
+        if (cancelled) {
+          return;
+        }
+        setProducts(dashboard.products);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  useEffect(() => {
+    function onRefresh(): void {
+      setReloadToken((value) => value + 1);
+    }
+    window.addEventListener("setwin-refresh", onRefresh);
+    return () => window.removeEventListener("setwin-refresh", onRefresh);
   }, []);
-
-  useEffect(() => {
-    if (!getToken()) {
-      return;
-    }
-    apiGet<{ username: string; displayName: string; roles: string[]; permissions: string[] }>("/auth/me")
-      .then((user) => {
-        setSessionUser({
-          username: user.username,
-          displayName: user.displayName,
-          roles: user.roles ?? [],
-          permissions: user.permissions ?? [],
-        });
-        setSessionLabel(user.username);
-        setSessionRoles((user.roles ?? []).join(", "));
-      })
-      .catch(() => setSessionLabel(""));
-  }, [token, message]);
-
-  async function login(): Promise<void> {
-    setError("");
-    setMessage("");
-    try {
-      const result = await apiPost<LoginResult>("/auth/login", { username, password }, { skipAuth: true });
-      setToken(result.token);
-      setTokenInput(result.token);
-      setSessionUser({
-        id: result.user.id,
-        username: result.user.username,
-        displayName: result.user.displayName,
-        roles: result.user.roles ?? [],
-        permissions: result.user.permissions ?? [],
-      });
-      setSessionLabel(result.user.username);
-      setSessionRoles((result.user.roles ?? []).join(", "));
-      setMessage(`Logged in as ${result.user.username} (${(result.user.roles ?? []).join(", ")})`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
 
   return (
     <div>
       <h1>Dashboard</h1>
-      <p>Living engineering twin status and session.</p>
-
-      <div className="panel" style={{ marginBottom: "1rem" }}>
-        <div className="muted">Sign in</div>
-        <p className="muted" style={{ marginTop: "0.25rem" }}>
-          Twin Explorer, Reviews, Audit, and AI activity require a session. Dashboard status alone does not.
-        </p>
-        <div className="toolbar">
-          <input
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            placeholder="username"
-            autoComplete="username"
-          />
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="password"
-            autoComplete="current-password"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                void login();
-              }
-            }}
-          />
-          <button type="button" onClick={() => void login()}>
-            Log in
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              clearToken();
-              setTokenInput("");
-              setSessionLabel("");
-              setSessionRoles("");
-              setMessage("Signed out");
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-        {sessionUser ? (
-          <p>
-            Signed in as <strong>{sessionUser}</strong>
-            {sessionRoles ? <span className="muted"> · roles: {sessionRoles}</span> : null}
-          </p>
-        ) : (
-          <p className="muted">Not signed in</p>
-        )}
-        {message ? <p>{message}</p> : null}
-      </div>
-
-      <details>
-        <summary className="muted">Advanced: paste CLI token</summary>
-        <div className="toolbar" style={{ marginTop: "0.75rem" }}>
-          <input
-            value={token}
-            onChange={(event) => setTokenInput(event.target.value)}
-            placeholder="stw_… from data/session.json"
-            style={{ minWidth: "280px" }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setToken(token);
-              setError("");
-              setMessage("Token saved");
-            }}
-          >
-            Save token
-          </button>
-        </div>
-      </details>
-
+      <p>Products under development, and how far each one has moved through review.</p>
       {error ? <p className="error">{error}</p> : null}
-      <div className="grid">
+      {loading ? <BrainLoader /> : null}
+      {!loading && products.length === 0 ? (
         <div className="panel">
-          <div className="muted">Product</div>
-          <div className="stat">{status?.name ?? "…"}</div>
-          <div>{status?.version}</div>
+          <p>No products yet.</p>
+          <Link to="/setup">Create one in Setup</Link>
         </div>
-        <div className="panel">
-          <div className="muted">Database</div>
-          <div className="stat">{status?.databaseReachable ? "up" : "down"}</div>
-        </div>
-        <div className="panel">
-          <div className="muted">Initialized</div>
-          <div className="stat">{status?.initialized ? "yes" : "no"}</div>
-        </div>
+      ) : null}
+      <div className="product-list">
+        {products.map((row) => {
+          const query = `?project=${encodeURIComponent(row.key)}`;
+          const openStories = Math.max(0, row.stories - row.implementedStories);
+          return (
+            <article key={row.key} className="panel product-card">
+              <header className="product-card-head">
+                <div>
+                  <h2>{row.name || row.key}</h2>
+                  <p className="muted" style={{ margin: 0 }}>
+                    {row.key}
+                    {row.description ? ` · ${row.description}` : ""}
+                  </p>
+                </div>
+                <div className="toolbar" style={{ margin: 0 }}>
+                  <Link className="product-link" to={`/workspace${query}`}>
+                    Workspace
+                  </Link>
+                  <Link className="product-link" to={`/twin${query}`}>
+                    Explorer
+                  </Link>
+                </div>
+              </header>
+              <div className="product-stats">
+                <Stat label="Features" value={String(row.features)} />
+                <Stat label="Repositories" value={String(row.repositories)} />
+                <Stat label="Stories" value={String(row.stories)} detail={`${openStories} still open`} />
+                <Stat label="Implemented" value={`${row.implementedStories}/${row.stories || 0}`} detail="code and all tests approved" />
+                <Stat label="In review" value={String(row.storiesInReview)} detail="stories" />
+                <Stat label="Designs" value={`${row.designsApproved}/${row.designs}`} detail="approved" />
+                <Stat label="Code" value={`${row.codeApproved}/${row.code}`} detail="approved" />
+                <Stat label="Tests" value={String(row.tests)} detail={`${row.testsApproved} approved · ${row.testsInReview} in review`} />
+              </div>
+            </article>
+          );
+        })}
       </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <div className="product-stat">
+      <div className="muted">{label}</div>
+      <div className="stat">{value}</div>
+      {detail ? <div className="muted">{detail}</div> : null}
     </div>
   );
 }

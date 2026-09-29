@@ -334,6 +334,8 @@ export const codeRepositories = pgTable("code_repositories", {
   remoteUrl: text("remote_url").notNull().default(""),
   defaultBranch: text("default_branch").notNull().default("main"),
   lastIndexedAt: timestamp("last_indexed_at", { withTimezone: true }),
+  indexedCommit: text("indexed_commit").notNull().default(""),
+  indexedBranch: text("indexed_branch").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
@@ -455,6 +457,58 @@ export const engineeringEvents = pgTable("engineering_events", {
   value: doublePrecision("value"),
   payloadJson: text("payload_json").notNull().default("{}"),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const testPlans = pgTable("test_plans", {
+  id: uuid("id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id),
+  name: text("name").notNull(),
+  sinceAt: timestamp("since_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull().default("ACTIVE"),
+  codeChangeCount: integer("code_change_count").notNull().default(0),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  releasedAt: timestamp("released_at", { withTimezone: true }),
+  releasedBy: uuid("released_by").references(() => users.id),
+  kind: text("kind").notNull().default("WINDOW"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export const testPlanItems = pgTable("test_plan_items", {
+  id: uuid("id").primaryKey(),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => testPlans.id),
+  artifactKey: text("artifact_key").notNull(),
+  title: text("title").notNull(),
+  workflowState: text("workflow_state").notNull(),
+  lane: text("lane").notNull(),
+  content: text("content").notNull().default(""),
+});
+
+export const testPlanChanges = pgTable("test_plan_changes", {
+  id: uuid("id").primaryKey(),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => testPlans.id),
+  artifactKey: text("artifact_key").notNull(),
+  title: text("title").notNull(),
+});
+
+export const testPlanRevisions = pgTable("test_plan_revisions", {
+  id: uuid("id").primaryKey(),
+  planId: uuid("plan_id")
+    .notNull()
+    .references(() => testPlans.id),
+  actorId: uuid("actor_id")
+    .notNull()
+    .references(() => users.id),
+  summary: text("summary").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 

@@ -35,6 +35,10 @@ import {
   roles,
   teamMembers,
   teams,
+  testPlanChanges,
+  testPlanItems,
+  testPlanRevisions,
+  testPlans,
   testResults,
   testRuns,
   userRoles,
@@ -57,11 +61,11 @@ export type DatabaseClient = {
   close: () => Promise<void>;
 };
 
-export function createDatabaseClient(databaseUrl: string): DatabaseClient {
+export function createDatabaseClient(databaseUrl: string, max = 1): DatabaseClient {
   const sql = postgres(databaseUrl, {
-    max: 1,
+    max,
     connect_timeout: CONNECT_TIMEOUT_SECONDS,
-    idle_timeout: 5,
+    idle_timeout: 20,
     onnotice: () => undefined,
   });
   const db = drizzle(sql);
@@ -72,6 +76,18 @@ export function createDatabaseClient(databaseUrl: string): DatabaseClient {
       await sql.end({ timeout: 1 });
     },
   };
+}
+
+const pools = new Map<string, DatabaseClient>();
+
+/** One pool per process. Callers must not close it. */
+export function getDatabasePool(databaseUrl: string): DatabaseClient {
+  let pool = pools.get(databaseUrl);
+  if (!pool) {
+    pool = createDatabaseClient(databaseUrl, 10);
+    pools.set(databaseUrl, pool);
+  }
+  return pool;
 }
 
 export async function checkDatabase(databaseUrl: string): Promise<DatabaseHealth> {
@@ -536,6 +552,57 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
         created_at timestamptz NOT NULL
       )
     `;
+    await client.sql`ALTER TABLE code_repositories ADD COLUMN IF NOT EXISTS indexed_commit text NOT NULL DEFAULT ''`;
+    await client.sql`ALTER TABLE code_repositories ADD COLUMN IF NOT EXISTS indexed_branch text NOT NULL DEFAULT ''`;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_plans (
+        id uuid PRIMARY KEY,
+        project_id uuid NOT NULL REFERENCES projects(id),
+        name text NOT NULL,
+        since_at timestamptz NOT NULL,
+        status text NOT NULL DEFAULT 'ACTIVE',
+        code_change_count integer NOT NULL DEFAULT 0,
+        created_by uuid NOT NULL REFERENCES users(id),
+        created_at timestamptz NOT NULL,
+        released_at timestamptz,
+        released_by uuid REFERENCES users(id)
+      )
+    `;
+    await client.sql`ALTER TABLE test_plans ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'WINDOW'`;
+    await client.sql`ALTER TABLE test_plans ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()`;
+    await client.sql`CREATE UNIQUE INDEX IF NOT EXISTS test_plans_one_master_idx ON test_plans (project_id) WHERE kind = 'MASTER'`;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_plan_items (
+        id uuid PRIMARY KEY,
+        plan_id uuid NOT NULL REFERENCES test_plans(id),
+        artifact_key text NOT NULL,
+        title text NOT NULL,
+        workflow_state text NOT NULL,
+        lane text NOT NULL,
+        content text NOT NULL DEFAULT ''
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_plan_changes (
+        id uuid PRIMARY KEY,
+        plan_id uuid NOT NULL REFERENCES test_plans(id),
+        artifact_key text NOT NULL,
+        title text NOT NULL
+      )
+    `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS test_plan_revisions (
+        id uuid PRIMARY KEY,
+        plan_id uuid NOT NULL REFERENCES test_plans(id),
+        actor_id uuid NOT NULL REFERENCES users(id),
+        summary text NOT NULL,
+        created_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`CREATE INDEX IF NOT EXISTS artifacts_project_id_idx ON artifacts (project_id)`;
+    await client.sql`CREATE INDEX IF NOT EXISTS code_symbols_repo_file_idx ON code_symbols (repository_id, file_path)`;
+    await client.sql`CREATE INDEX IF NOT EXISTS artifact_relationships_to_idx ON artifact_relationships (to_artifact_id)`;
+    await client.sql`CREATE INDEX IF NOT EXISTS code_repositories_project_id_idx ON code_repositories (project_id)`;
   } finally {
     try {
       await client.sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_ID})`;
@@ -549,12 +616,7 @@ export async function withDatabase<T>(
   databaseUrl: string,
   fn: (client: DatabaseClient) => Promise<T>,
 ): Promise<T> {
-  const client = createDatabaseClient(databaseUrl);
-  try {
-    return await fn(client);
-  } finally {
-    await client.close();
-  }
+  return fn(getDatabasePool(databaseUrl));
 }
 
 export async function readMeta(databaseUrl: string, key: string): Promise<string | undefined> {
@@ -666,6 +728,10 @@ export {
   setwinMeta,
   teamMembers,
   teams,
+  testPlanChanges,
+  testPlanItems,
+  testPlanRevisions,
+  testPlans,
   testResults,
   testRuns,
   userRoles,

@@ -44,6 +44,23 @@ export {
   WORKFLOW_ACTIONS,
   WORKFLOW_STATES,
 } from "./types.ts";
+export { getArtifactAbout, type ArtifactAbout, type ArtifactAboutEvent } from "./about.ts";
+export { listProjectDashboard, summarizeProjectDashboard, type ProjectDashboardStats } from "./dashboard.ts";
+export {
+  PLAN_LANES,
+  classifyTestPlan,
+  createTestPlan,
+  ensureMasterTestPlans,
+  extractSourcePaths,
+  getTestPlan,
+  listTestPlans,
+  rebaselineMasterTestPlan,
+  releaseTestPlan,
+  renameTestPlan,
+  type ClassifiedPlan,
+  type PlanLane,
+  type TestPlanSummary,
+} from "./test-plan.ts";
 export {
   createArtifact,
   createArtifactVersion,
@@ -54,10 +71,12 @@ export {
   getGherkin,
   getProject,
   listArtifacts,
+  listProjectPipeline,
   listGherkin,
   listProjects,
   listRelationships,
   softDeleteArtifact,
+  permanentlyDeleteStoryArtifact,
   permanentlyDeleteTestArtifact,
   updateProject,
 } from "./service.ts";

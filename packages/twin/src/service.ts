@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, or } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { recordAuditEvent } from "@setwin/audit";
 import {
   AuthorizationError,
@@ -301,6 +302,63 @@ export async function listArtifacts(
   });
 }
 
+/** Current versions and links for one project, in two queries. */
+export async function listProjectPipeline(
+  databaseUrl: string,
+  projectInput: string,
+  actor?: Principal,
+): Promise<{ artifacts: ArtifactRecord[]; relationships: Array<{ from: string; to: string; type: string }> }> {
+  await requirePermission(databaseUrl, actor, "artifact:view");
+  return withDatabase(databaseUrl, async ({ db }) => {
+    const project = (await db.select().from(projects).where(eq(projects.key, projectKey(projectInput))))[0];
+    if (!project) {
+      throw new NotFoundError(`Project not found: ${projectInput}`);
+    }
+    const rows = await db
+      .select({ artifact: artifacts, version: artifactVersions })
+      .from(artifacts)
+      .innerJoin(artifactVersions, eq(artifactVersions.id, artifacts.currentVersionId))
+      .where(and(eq(artifacts.projectId, project.id), isNull(artifacts.deletedAt)))
+      .orderBy(asc(artifacts.key));
+    const artifactRecords: ArtifactRecord[] = rows.map(({ artifact, version }) => {
+      const current = toVersion(version, artifact.key, [version]);
+      return {
+        id: artifact.id,
+        key: artifact.key,
+        type: artifact.type as ArtifactType,
+        projectKey: project.key,
+        createdBy: artifact.createdBy,
+        createdAt: artifact.createdAt,
+        deletedAt: null,
+        currentVersion: current,
+        versions: [current],
+      };
+    });
+    const fromArtifact = alias(artifacts, "pipeline_from");
+    const toArtifact = alias(artifacts, "pipeline_to");
+    const links = await db
+      .select({
+        type: artifactRelationships.type,
+        fromKey: fromArtifact.key,
+        toKey: toArtifact.key,
+      })
+      .from(artifactRelationships)
+      .innerJoin(fromArtifact, eq(fromArtifact.id, artifactRelationships.fromArtifactId))
+      .innerJoin(toArtifact, eq(toArtifact.id, artifactRelationships.toArtifactId))
+      .where(
+        and(
+          or(eq(fromArtifact.projectId, project.id), eq(toArtifact.projectId, project.id)),
+          isNull(fromArtifact.deletedAt),
+          isNull(toArtifact.deletedAt),
+        ),
+      );
+    return {
+      artifacts: artifactRecords,
+      relationships: links.map((row) => ({ from: row.fromKey, to: row.toKey, type: row.type })),
+    };
+  });
+}
+
 export async function getArtifact(databaseUrl: string, key: string, actor?: Principal): Promise<ArtifactRecord> {
   await requirePermission(databaseUrl, actor, "artifact:view");
   return withDatabase(databaseUrl, async (client) => loadArtifact(client, key.trim().toUpperCase()));
@@ -454,6 +512,112 @@ export async function permanentlyDeleteTestArtifact(
     actor: principal,
   });
 
+    return { key: snapshot.key, deleted: true };
+}
+
+/**
+ * Permanently delete a story that is not yet implemented.
+ * Refused once a linked design or architecture is APPROVED.
+ */
+export async function permanentlyDeleteStoryArtifact(
+  databaseUrl: string,
+  key: string,
+  actor?: Principal,
+): Promise<{ key: string; deleted: true }> {
+  const principal = actor;
+  if (!principal) {
+    throw new AuthorizationError("Authentication required");
+  }
+  await requirePermission(databaseUrl, principal, "artifact:view");
+  const isAdmin = principal.roles.includes("administrator");
+  const canDelete =
+    isAdmin ||
+    principal.roles.includes("product_owner") ||
+    principal.permissions.includes("requirement:create");
+  if (!canDelete) {
+    throw new AuthorizationError("Product owner or administrator required to delete a story");
+  }
+
+  const snapshot = await withDatabase(databaseUrl, async (client) => {
+    const artifact = (await client.db.select().from(artifacts).where(eq(artifacts.key, key.trim().toUpperCase())))[0];
+    if (!artifact || artifact.deletedAt) {
+      throw new NotFoundError(`Artifact not found: ${key}`);
+    }
+    const loaded = await loadArtifact(client, artifact.key, { allowDeleted: true });
+    if (loaded.type !== "STORY" && loaded.type !== "REQUIREMENT" && loaded.type !== "EPIC") {
+      throw new ValidationError(`Only stories can be permanently deleted this way (got ${loaded.type})`);
+    }
+
+    const links = await client.db
+      .select({
+        fromId: artifactRelationships.fromArtifactId,
+        toId: artifactRelationships.toArtifactId,
+      })
+      .from(artifactRelationships)
+      .where(
+        or(eq(artifactRelationships.fromArtifactId, artifact.id), eq(artifactRelationships.toArtifactId, artifact.id)),
+      );
+    for (const link of links) {
+      const otherId = link.fromId === artifact.id ? link.toId : link.fromId;
+      const other = (await client.db.select().from(artifacts).where(eq(artifacts.id, otherId)))[0];
+      if (!other || other.deletedAt || (other.type !== "DESIGN" && other.type !== "ARCHITECTURE")) {
+        continue;
+      }
+      if (!other.currentVersionId) {
+        continue;
+      }
+      const version = (
+        await client.db.select().from(artifactVersions).where(eq(artifactVersions.id, other.currentVersionId))
+      )[0];
+      if (version?.workflowState === "APPROVED") {
+        throw new ValidationError("Cannot delete a story after its design is approved");
+      }
+    }
+
+    const versionRows = await client.db
+      .select({ id: artifactVersions.id })
+      .from(artifactVersions)
+      .where(eq(artifactVersions.artifactId, artifact.id));
+    const versionIds = versionRows.map((row) => row.id);
+    for (const versionId of versionIds) {
+      const reviewRows = await client.db.select({ id: reviews.id }).from(reviews).where(eq(reviews.artifactVersionId, versionId));
+      for (const review of reviewRows) {
+        const requestRows = await client.db
+          .select({ id: approvalRequests.id })
+          .from(approvalRequests)
+          .where(eq(approvalRequests.reviewId, review.id));
+        for (const request of requestRows) {
+          await client.db.delete(approvalDecisions).where(eq(approvalDecisions.requestId, request.id));
+        }
+        for (const request of requestRows) {
+          await client.db.delete(approvalRequests).where(eq(approvalRequests.id, request.id));
+        }
+        await client.db.delete(reviewFindings).where(eq(reviewFindings.reviewId, review.id));
+        await client.db.delete(reviews).where(eq(reviews.id, review.id));
+      }
+      await client.db.delete(workflowTransitions).where(eq(workflowTransitions.artifactVersionId, versionId));
+    }
+
+    await client.db
+      .delete(artifactRelationships)
+      .where(or(eq(artifactRelationships.fromArtifactId, artifact.id), eq(artifactRelationships.toArtifactId, artifact.id)));
+    await client.db.update(artifacts).set({ currentVersionId: null }).where(eq(artifacts.id, artifact.id));
+    await client.db.delete(artifactVersions).where(eq(artifactVersions.artifactId, artifact.id));
+    await client.db.delete(artifacts).where(eq(artifacts.id, artifact.id));
+
+    return { key: loaded.key, id: loaded.id, version: loaded.currentVersion.version };
+  });
+
+  await recordAuditEvent(databaseUrl, {
+    action: "twin.artifact.hard_delete",
+    entityType: "artifact",
+    entityId: snapshot.id,
+    entityKey: snapshot.key,
+    version: snapshot.version,
+    after: { deleted: true, permanent: true },
+    actor: principal,
+  });
+
   return { key: snapshot.key, deleted: true };
 }
 
@@ -551,14 +715,15 @@ export async function createArtifactVersion(
     if (!artifact) {
       throw new NotFoundError(`Artifact not found: ${key}`);
     }
+    const expectedVersionId = artifact.currentVersionId;
     const versions = await client.db
       .select()
       .from(artifactVersions)
       .where(eq(artifactVersions.artifactId, artifact.id))
       .orderBy(desc(artifactVersions.version));
-    const current = versions[0];
-    if (!current) {
-      throw new NotFoundError(`Artifact not found: ${key}`);
+    const current = versions.find((row) => row.id === expectedVersionId);
+    if (!current || !expectedVersionId) {
+      throw new ConflictError("This artifact was updated by someone else. Refresh and try again.");
     }
     if (current.status === "APPROVED") {
       // Keep the approved row immutable; the new version is DRAFT.
@@ -574,27 +739,42 @@ export async function createArtifactVersion(
     const nextVersion = current.version + 1;
     const content = input.content ?? current.content;
     const parsed = artifact.type === "GHERKIN" ? parseGherkin(content) : undefined;
-    await client.db.insert(artifactVersions).values({
-      id: versionId,
-      artifactId: artifact.id,
-      version: nextVersion,
-      status: "DRAFT",
-      workflowState: "DRAFT",
-      title: input.title?.trim() || current.title,
-      content,
-      provenanceSource,
-      provenanceAuthority,
-      createdBy: principal.id,
-      createdAt: now,
-      supersededBy: null,
-    });
+    try {
+      await client.db.insert(artifactVersions).values({
+        id: versionId,
+        artifactId: artifact.id,
+        version: nextVersion,
+        status: "DRAFT",
+        workflowState: "DRAFT",
+        title: input.title?.trim() || current.title,
+        content,
+        provenanceSource,
+        provenanceAuthority,
+        createdBy: principal.id,
+        createdAt: now,
+        supersededBy: null,
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError("This artifact was updated by someone else. Refresh and try again.");
+      }
+      throw error;
+    }
+    const claimed = await client.db
+      .update(artifacts)
+      .set({ currentVersionId: versionId })
+      .where(and(eq(artifacts.id, artifact.id), eq(artifacts.currentVersionId, expectedVersionId)))
+      .returning({ id: artifacts.id });
+    if (claimed.length === 0) {
+      await client.db.delete(artifactVersions).where(eq(artifactVersions.id, versionId));
+      throw new ConflictError("This artifact was updated by someone else. Refresh and try again.");
+    }
     if (current.status === "DRAFT") {
       await client.db
         .update(artifactVersions)
         .set({ status: "SUPERSEDED", supersededBy: versionId })
         .where(eq(artifactVersions.id, current.id));
     }
-    await client.db.update(artifacts).set({ currentVersionId: versionId }).where(eq(artifacts.id, artifact.id));
     if (parsed) {
       await persistGherkin(client, versionId, parsed);
     }
@@ -804,6 +984,10 @@ async function loadArtifact(
     currentVersion: current,
     versions,
   };
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "23505";
 }
 
 function toVersion(

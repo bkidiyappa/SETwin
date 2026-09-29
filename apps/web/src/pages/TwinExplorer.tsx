@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent, type WheelEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   apiGet,
   getSessionUser,
@@ -8,6 +8,7 @@ import {
   refreshSession,
   type SessionUser,
 } from "../api";
+import { BrainLoader } from "../components/BrainLoader";
 
 type Project = { key: string; name: string };
 
@@ -19,6 +20,16 @@ type Artifact = {
 };
 
 type Edge = { from: string; to: string; type: string };
+
+type AboutPayload = {
+  key: string;
+  title: string;
+  createdBy: string;
+  createdAt: string;
+  provenance: { source: string; authority: string; author: string };
+  designs: Array<{ key: string; title: string; createdBy: string }>;
+  timeline: Array<{ at: string; label: string; actor: string; detail: string }>;
+};
 
 type PipelineStatus = {
   project: string;
@@ -63,6 +74,21 @@ function categoryOf(type: string): SimNode["category"] {
     return "test";
   }
   return "other";
+}
+
+function collectDirect(startKey: string, allEdges: Edge[]): Set<string> {
+  const start = startKey.toUpperCase();
+  const keys = new Set<string>([start]);
+  for (const edge of allEdges) {
+    const from = edge.from.toUpperCase();
+    const to = edge.to.toUpperCase();
+    if (from === start) {
+      keys.add(to);
+    } else if (to === start) {
+      keys.add(from);
+    }
+  }
+  return keys;
 }
 
 function collectConnected(startKey: string, allEdges: Edge[]): Set<string> {
@@ -208,15 +234,23 @@ function truncate(text: string, max: number): string {
 }
 
 export function TwinExplorerPage() {
+  const [searchParams] = useSearchParams();
+  const projectFromUrl = searchParams.get("project") ?? "";
   const [session, setSession] = useState<SessionUser | null>(getSessionUser());
   const [projects, setProjects] = useState<Project[]>([]);
-  const [project, setProject] = useState("");
+  const [project, setProject] = useState(projectFromUrl);
   const [pipeline, setPipeline] = useState<PipelineStatus | null>(null);
   const [selectedKey, setSelectedKey] = useState("");
   const [reqQuery, setReqQuery] = useState("");
   const [codeQuery, setCodeQuery] = useState("");
   const [testQuery, setTestQuery] = useState("");
   const [error, setError] = useState("");
+  const [pageLoading, setPageLoading] = useState(true);
+  const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; key: string } | null>(null);
+  const [about, setAbout] = useState<AboutPayload | null>(null);
+  const [aboutLoading, setAboutLoading] = useState(false);
+  const [aboutError, setAboutError] = useState("");
+  const pipelineSeq = useRef(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [expanded, setExpanded] = useState<ExpandPane>(null);
@@ -229,10 +263,29 @@ export function TwinExplorerPage() {
   });
   const graphWrapRef = useRef<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    if (!nodeMenu) {
+      return;
+    }
+    const close = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".twin-context-menu")) {
+        return;
+      }
+      setNodeMenu(null);
+    };
+    const id = window.setTimeout(() => window.addEventListener("click", close), 0);
+    return () => {
+      window.clearTimeout(id);
+      window.removeEventListener("click", close);
+    };
+  }, [nodeMenu]);
+
   const loadProjects = useCallback(async () => {
     if (!getToken()) {
       setError("Sign in on the Dashboard first.");
       setPipeline(null);
+      setPageLoading(false);
       return;
     }
     setError("");
@@ -241,13 +294,20 @@ export function TwinExplorerPage() {
       setSession(me);
       const projectRows = await apiGet<Project[]>("/projects");
       setProjects(projectRows);
-      setProject((current) =>
-        projectRows.some((row) => row.key === current) ? current : projectRows[0]?.key ?? "",
-      );
+      setProject((current) => {
+        if (projectFromUrl && projectRows.some((row) => row.key === projectFromUrl)) {
+          return projectFromUrl;
+        }
+        return projectRows.some((row) => row.key === current) ? current : projectRows[0]?.key ?? "";
+      });
+      if (projectRows.length === 0) {
+        setPageLoading(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setPageLoading(false);
     }
-  }, []);
+  }, [projectFromUrl]);
 
   useEffect(() => {
     void loadProjects();
@@ -258,21 +318,68 @@ export function TwinExplorerPage() {
   }, [loadProjects]);
 
   useEffect(() => {
-    if (!project || !getToken()) {
+    if (!getToken()) {
+      setPipeline(null);
+      setPageLoading(false);
+      return;
+    }
+    if (!project) {
       setPipeline(null);
       return;
     }
+    const seq = ++pipelineSeq.current;
+    setPageLoading(true);
     void (async () => {
       try {
         const status = await apiGet<PipelineStatus>(`/pipeline/${project}`);
+        if (seq !== pipelineSeq.current) {
+          return;
+        }
         setPipeline(status);
         setSelectedKey("");
         setZoom(1);
         setPan({ x: 0, y: 0 });
       } catch (err) {
+        if (seq !== pipelineSeq.current) {
+          return;
+        }
         setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (seq === pipelineSeq.current) {
+          setPageLoading(false);
+        }
       }
     })();
+  }, [project]);
+
+  useEffect(() => {
+    function onRefresh(): void {
+      if (!project || !getToken()) {
+        return;
+      }
+      const seq = ++pipelineSeq.current;
+      setPageLoading(true);
+      void (async () => {
+        try {
+          const status = await apiGet<PipelineStatus>(`/pipeline/${project}`);
+          if (seq !== pipelineSeq.current) {
+            return;
+          }
+          setPipeline(status);
+        } catch (err) {
+          if (seq !== pipelineSeq.current) {
+            return;
+          }
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          if (seq === pipelineSeq.current) {
+            setPageLoading(false);
+          }
+        }
+      })();
+    }
+    window.addEventListener("setwin-refresh", onRefresh);
+    return () => window.removeEventListener("setwin-refresh", onRefresh);
   }, [project]);
 
   const allArtifacts = useMemo(
@@ -282,12 +389,19 @@ export function TwinExplorerPage() {
   const allEdges = useMemo(() => pipeline?.relationships ?? [], [pipeline]);
   const byKey = useMemo(() => new Map(allArtifacts.map((row) => [row.key, row])), [allArtifacts]);
 
+  const selectedArtifact = selectedKey ? byKey.get(selectedKey) : undefined;
+  const selectedIsTest = Boolean(selectedArtifact && TEST_TYPES.has(selectedArtifact.type));
+
   const connectedKeys = useMemo(() => {
     if (!selectedKey) {
       return null;
     }
+    // A test sits on a shared design, so a full walk pulls in every sibling test.
+    if (selectedIsTest) {
+      return collectDirect(selectedKey, allEdges);
+    }
     return collectConnected(selectedKey, allEdges);
-  }, [selectedKey, allEdges]);
+  }, [selectedKey, allEdges, selectedIsTest]);
 
   const requirementsAll = useMemo(
     () => allArtifacts.filter((row) => REQUIREMENT_TYPES.has(row.type)),
@@ -447,6 +561,11 @@ export function TwinExplorerPage() {
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
                   style={{ cursor: "pointer" }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setNodeMenu({ x: event.clientX, y: event.clientY, key: node.key });
+                  }}
                 >
                   <circle
                     cx={node.x}
@@ -570,14 +689,19 @@ export function TwinExplorerPage() {
 
   return (
     <div className="twin-explorer">
+      {pageLoading ? (
+        <div className="brain-loader-overlay">
+          <BrainLoader messages={["Opening the explorer", "Reading the graph", "Linking stories", "Counting tests"]} />
+        </div>
+      ) : null}
       <header className="workspace-header">
         <div>
           <h1>Twin Explorer</h1>
           <p>Zoom the graph · expand panes · select nodes to refresh related cards</p>
         </div>
-        <div className="toolbar twin-product-bar">
-          <label className="muted">
-            Product
+        <div className="twin-header-controls">
+          <label className="twin-control">
+            <span>Product</span>
             <select
               value={project}
               onChange={(event) => setProject(event.target.value)}
@@ -603,11 +727,11 @@ export function TwinExplorerPage() {
             Clear selection
           </button>
           {!getToken() ? (
-            <Link to="/" className="error">
+            <Link to="/" className="twin-user twin-user-alert">
               Sign in required
             </Link>
           ) : (
-            <span className="muted">{session?.username}</span>
+            <span className="twin-user">{session?.username}</span>
           )}
         </div>
       </header>
@@ -701,8 +825,9 @@ export function TwinExplorerPage() {
               {selected.currentVersion.workflowState} — {selected.currentVersion.title}
             </span>
             <div className="muted" style={{ marginTop: "0.35rem", fontSize: "0.85rem" }}>
-              Connected: {relatedRequirements.length} requirement(s) · {relatedCode.length} code/design ·{" "}
-              {relatedTests.length} test(s). Cards below list only artifacts linked to this node.
+              {selectedIsTest ? "Direct links" : "Connected"}: {relatedRequirements.length} requirement(s) ·{" "}
+              {relatedCode.length} code/design · {relatedTests.length} test(s). Cards below list only artifacts{" "}
+              {selectedIsTest ? "directly connected to this test" : "linked to this node"}.
             </div>
           </div>
           <button type="button" onClick={() => setSelectedKey("")}>
@@ -791,6 +916,83 @@ export function TwinExplorerPage() {
               <button type="button" onClick={closeModal}>
                 Collapse
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {nodeMenu ? (
+        <div className="twin-context-menu" style={{ left: nodeMenu.x, top: nodeMenu.y }} role="menu">
+          <button
+            type="button"
+            onClick={() => {
+              const key = nodeMenu.key;
+              setNodeMenu(null);
+              setAbout(null);
+              setAboutError("");
+              setAboutLoading(true);
+              void apiGet<AboutPayload>(`/artifacts/${key}/about`)
+                .then(setAbout)
+                .catch((err: unknown) => setAboutError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setAboutLoading(false));
+            }}
+          >
+            Tell me about it
+          </button>
+        </div>
+      ) : null}
+      {about || aboutLoading || aboutError ? (
+        <div
+          className="twin-modal-backdrop"
+          role="presentation"
+          onClick={() => {
+            setAbout(null);
+            setAboutError("");
+            setAboutLoading(false);
+          }}
+        >
+          <div className="twin-modal about-modal" role="dialog" aria-label="Tell me about it" onClick={(event) => event.stopPropagation()}>
+            <div className="twin-modal-head">
+              <h2>{about ? `${about.key} · ${about.title}` : "Tell me about it"}</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setAbout(null);
+                  setAboutError("");
+                  setAboutLoading(false);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div className="twin-modal-body">
+              {aboutLoading ? <p className="muted">Reading history…</p> : null}
+              {aboutError ? <p className="error">{aboutError}</p> : null}
+              {about ? (
+                <>
+                  <p className="muted">
+                    Created by {about.createdBy} · {new Date(about.createdAt).toLocaleString()}. Current version by{" "}
+                    {about.provenance.author} ({about.provenance.source}, {about.provenance.authority}).
+                  </p>
+                  {about.designs.length ? (
+                    <p>
+                      Design:{" "}
+                      {about.designs.map((row) => `${row.key} by ${row.createdBy}`).join("; ")}
+                    </p>
+                  ) : null}
+                  <ol className="about-timeline">
+                    {about.timeline.map((event, index) => (
+                      <li key={`${event.at}-${event.label}-${index}`}>
+                        <strong>{event.label}</strong>
+                        <span className="muted">
+                          {" "}
+                          {event.actor} · {new Date(event.at).toLocaleString()}
+                        </span>
+                        {event.detail ? <div>{event.detail}</div> : null}
+                      </li>
+                    ))}
+                  </ol>
+                </>
+              ) : null}
             </div>
           </div>
         </div>

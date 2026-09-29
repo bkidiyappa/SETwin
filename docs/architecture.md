@@ -23,14 +23,14 @@ CLI / API / MCP / Web  --->  packages/* (domain)  --->  PostgreSQL (+ pgvector-r
 
 ### 2. Product & repository
 
-1. Create a **project** (product) — CLI `project create` or Web **Repositories**.
-2. Optionally **register a git repo** under that project and index symbols for context.
+1. Create a **project** (product) on **Setup**, or with CLI `project create`. Setup also saves the tech stack and features.
+2. On **Setup**, register a git checkout for that product and click **Index**. Indexing does not commit or delete that folder.
 
 Artifacts always belong to a project. Twin Explorer’s top filter is the **product (project)**.
 
 ### 3. Stories from a prompt (Workspace)
 
-1. Sign in (Dashboard). Session carries `roles` + `permissions`.
+1. Sign in on the login page. The session carries `roles` and `permissions`.
 2. On **Workspace**, enter a free-text prompt (placeholder only; field starts empty).
 3. **Create stories** calls `POST /stories/from-prompt`.
    - Product Owner skill (`packages/agents/skills/product_owner.md`) asks the AI to split the prompt into one or more logical **STORY** drafts (`STY-*`).
@@ -153,7 +153,7 @@ pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass
 ```
 
-Then Sign out / Log in on the Web Dashboard (old browser tokens are invalid after a DB wipe).
+Then sign out and log in again. Old browser tokens are invalid after a database wipe. This does not delete registered git checkouts on disk. Step-by-step product setup is in [Getting started](getting-started.md).
 
 ## Documentation
 

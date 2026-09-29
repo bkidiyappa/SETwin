@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { apiGet, clearToken, getSessionUser, getToken, onTokenChange } from "./api";
 import { DashboardPage } from "./pages/Dashboard";
+import { LoginPage } from "./pages/Login";
 import { WorkspacePage } from "./pages/Workspace";
 import { TwinExplorerPage } from "./pages/TwinExplorer";
+import { TestPlansPage } from "./pages/TestPlans";
+import { TestPlanDetailPage } from "./pages/TestPlanDetail";
 import { SetupPage } from "./pages/Setup";
 import { ReviewsPage } from "./pages/Reviews";
 import { AuditPage } from "./pages/Audit";
@@ -14,24 +18,65 @@ const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: "⌂" },
   { to: "/workspace", label: "Workspace", icon: "▦" },
   { to: "/twin", label: "Twin Explorer", icon: "◎" },
-  { to: "/reviews", label: "Reviews", icon: "☑" },
+  { to: "/test-plans", label: "Test Plans", icon: "☑" },
+  { to: "/reviews", label: "Reviews", icon: "✔" },
   { to: "/audit", label: "Audit", icon: "☰" },
   { to: "/ai", label: "AI activity", icon: "⚡" },
   { to: "/setup", label: "Setup", icon: "⚙" },
 ] as const;
 
+type SystemStatus = {
+  databaseReachable: boolean;
+  initialized: boolean;
+};
+
 export function App() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSE_KEY) === "1");
+  const [signedIn, setSignedIn] = useState(() => Boolean(getToken()));
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const session = getSessionUser();
 
   useEffect(() => {
     localStorage.setItem(NAV_COLLAPSE_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
 
+  useEffect(() => onTokenChange(() => setSignedIn(Boolean(getToken()))), []);
+
+  useEffect(() => {
+    if (!signedIn) {
+      return;
+    }
+    let cancelled = false;
+    void apiGet<SystemStatus>("/status")
+      .then((next) => {
+        if (!cancelled) {
+          setStatus(next);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStatus(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+
+  if (!signedIn) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <div className={`app-shell ${collapsed ? "nav-collapsed" : ""}`}>
       <nav aria-label="Main">
         <div className="nav-top">
-          <div className="brand">{collapsed ? "ST" : "SETwin"}</div>
+          <div className="brand">{collapsed ? "ST" : "SE Twin"}</div>
           <button
             type="button"
             className="nav-collapse-btn"
@@ -50,11 +95,42 @@ export function App() {
           </NavLink>
         ))}
       </nav>
+      <div className="app-main">
+        <header className="app-topbar">
+          <span className={`topbar-status ${status?.databaseReachable ? "is-up" : status ? "is-down" : ""}`}>
+            <span className="topbar-status-dot" aria-hidden />
+            Database {status?.databaseReachable ? "up" : status ? "down" : "…"}
+            {status?.initialized ? " · initialized" : ""}
+          </span>
+          {session ? (
+            <div className="topbar-user">
+              <strong>{session.username}</strong>
+              {session.roles.length ? <span className="muted">{session.roles.join(", ")}</span> : null}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              void apiGet<SystemStatus>("/status")
+                .then(setStatus)
+                .catch(() => setStatus(null));
+              window.dispatchEvent(new Event("setwin-refresh"));
+            }}
+          >
+            Refresh
+          </button>
+          <button type="button" className="topbar-signout" onClick={() => clearToken()}>
+            Sign out
+          </button>
+        </header>
       <main>
         <Routes>
+          <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/" element={<DashboardPage />} />
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/twin" element={<TwinExplorerPage />} />
+          <Route path="/test-plans" element={<TestPlansPage />} />
+          <Route path="/test-plans/:id" element={<TestPlanDetailPage />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/repos" element={<SetupPage />} />
           <Route path="/reviews" element={<ReviewsPage />} />
@@ -63,6 +139,7 @@ export function App() {
           <Route path="/ai" element={<AiActivityPage />} />
         </Routes>
       </main>
+      </div>
     </div>
   );
 }

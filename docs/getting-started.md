@@ -1,490 +1,229 @@
-# Getting started with SETwin
+# Using SE Twin
 
-Step-by-step guide for local use on the TypeScript core. Commands below assume you run them from the repository root on Windows PowerShell. On macOS/Linux, use `cp` instead of `copy`.
+Follow these steps in order the first time. After that, start at [Open the app](#3-open-the-app-and-sign-in) and continue with the product you already created.
 
-> **AI proposes. SETwin remembers. Roles review. Humans approve. Everything is traceable.**
-
-For system layout, see [architecture.md](architecture.md). For the full product plan, see [PLAN.md](../PLAN.md).
+SE Twin remembers a product: its stories, design, code, tests, reviews, and test plans. Your git checkout stays the source of the code. SE Twin does not replace Git, and indexing a repo does not delete or commit files.
 
 ---
 
-## 1. Prerequisites
+## 1. Install once
 
-- Node.js 20+
-- [pnpm](https://pnpm.io/)
-- Docker Desktop (recommended) for PostgreSQL
+You need Node.js 20 or newer, [pnpm](https://pnpm.io/), and Docker Desktop (for PostgreSQL).
 
-Optional later:
-
-- [Ollama](https://ollama.com/) for local AI (Phase 7+)
-- Provider API keys in `.env` for OpenAI, Anthropic, etc.
-
-**CLI tip:** there is no global `setwin` binary after clone. Always use:
-
-```bash
-pnpm setwin -- status
-pnpm setwin -- init
-```
-
-The `--` after `setwin` stops pnpm from swallowing flags meant for the CLI.
-
----
-
-## 2. Install and configure
+From the project folder:
 
 ```bash
 pnpm install
 copy .env.example .env
 docker compose up -d
-pnpm test
-```
-
-Check what `.env` controls in [`.env.example`](../.env.example). Secrets stay out of Git. Status output redacts database passwords.
-
-Confirm the stack:
-
-```bash
-pnpm setwin -- status
-```
-
-You should see a redacted database URL and whether Postgres is reachable.
-
----
-
-## 3. Initialize the workspace
-
-```bash
-pnpm setwin -- init
-```
-
-This creates `data/` and `workspace/`, applies migrations when the database is up, and seeds:
-
-- roles and permissions
-- workflow policies
-- approval policies
-
-Re-running `init` is safe if already initialized.
-
----
-
-## 4. Create users and log in
-
-The **first** user becomes `administrator`. Later users need an admin session.
-
-```bash
-pnpm setwin -- user create admin --password admin-pass
-pnpm setwin -- login admin --password admin-pass
-pnpm setwin -- whoami
-```
-
-Login stores a session token in `data/session.json` (gitignored). You can also pass `--token` or set `SETWIN_TOKEN`.
-
-**If `user create` says Authentication required:** the database already has users (often from `pnpm test`). Reset and bootstrap:
-
-```bash
-docker compose down -v
-docker compose up -d
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
-pnpm setwin -- login admin --password admin-pass
 ```
 
-On the Web UI: **Sign out**, then **Log in** again (tokens from the old DB are invalid).
+On macOS or Linux, use `cp .env.example .env` instead of `copy`.
 
-### Full data wipe (start from product + repo)
+`init` creates the database tables and the built-in roles. The first user is an administrator. Use a password you will remember; `admin-pass` is only an example.
 
-To delete all projects, stories, reviews, and repos and begin fresh:
-
-```bash
-docker compose down -v
-docker compose up -d
-pnpm setwin -- init
-pnpm setwin -- user create admin --password admin-pass
-pnpm setwin -- login admin --password admin-pass
-```
-
-Then create a project/feature on **Setup** (or CLI), optionally register a repo, and use Workspace → Approve → Advance → Twin Explorer.
-
-### Web UI sign-in
-
-1. Open `http://localhost:5173` (Dashboard) with API (`pnpm dev`) and Web (`pnpm web`) running.
-2. Enter username/password → **Log in** (or paste `stw_…` from `data/session.json` under Advanced).
-3. Open **Workspace** (`/workspace`) for the gated workflow:
-   - Prompt on top; four columns: Stories · Design · Code · Tests (drag column edges to resize).
-   - Create Features on **Setup**; attach a Feature to each story before submit (no default).
-   - Story-level **→ Design / → Code / → Tests**; LLM context includes the full Feature + all sibling stories.
-   - Activity opens from the header clock icon (modal).
-   - Left nav is collapsible with icons.
-4. **Twin Explorer** (`/twin`): product filter, full node graph (zoom in for titles/details, Expand/Collapse modal), and three searchable cards (Requirements / Code / Tests). Click a node to refresh all cards with connected artifacts only.
-   - Role skills are markdown under `packages/agents/skills/*.md`. List with `pnpm setwin -- agent skills`.
-4. Twin Explorer / Repositories need the same session.
-
-See [architecture.md](architecture.md) for a detailed walkthrough of pipeline gates, relationships, and Explorer behavior.
-
-`/status` is public, so Database can show **up** before you sign in. Artifact pages need a Bearer token.
-
-Create a Product Owner for requirement approval (separation of duties: authors should not approve their own work):
-
-```bash
-pnpm setwin -- user create po --password po-pass --role product_owner
-pnpm setwin -- user create reviewer --password reviewer-pass --role product_owner
-pnpm setwin -- role list
-```
-
-Useful identity commands:
-
-```bash
-pnpm setwin -- user list
-pnpm setwin -- user show po
-pnpm setwin -- user assign-role reviewer product_owner
-pnpm setwin -- team create platform --description "Core team"
-pnpm setwin -- team add platform po
-```
+If `user create` says authentication is required, an administrator already exists. Sign in with that account. Do not create a second one unless you mean to.
 
 ---
 
-## 5. First vertical slice (demo)
+## 2. Start SE Twin
 
-Demo scenario from the plan:
+Use two terminals in the project folder. Leave both running.
 
-> Customers can cancel an order within 30 minutes.
-
-### 5.1 Project
-
-```bash
-pnpm setwin -- project create demo --name "Demo"
-pnpm setwin -- project show demo
-```
-
-### 5.2 Requirement (DRAFT)
-
-```bash
-pnpm setwin -- requirement create "Customers can cancel an unpaid order within 30 minutes." --project demo
-pnpm setwin -- requirement show REQ-001
-```
-
-Artifact keys are typed (`REQ-001`, `TST-001`, …). Version 1 starts as `DRAFT`.
-
-### 5.3 Generate Gherkin (always DRAFT)
-
-With Ollama (or another configured provider):
-
-```bash
-pnpm setwin -- requirement gherkin REQ-001
-pnpm setwin -- gherkin show TST-001
-```
-
-AI output is validated and stored as **DRAFT**. It is never auto-approved.
-
-Without a live model, the gateway may fall back to a deterministic draft or report the provider unavailable—check `pnpm setwin -- ai actions`.
-
-You can also author Gherkin by hand:
-
-```bash
-pnpm setwin -- gherkin validate --file order-cancel.feature
-pnpm setwin -- gherkin create --project demo --file order-cancel.feature --requirement REQ-001
-```
-
-### 5.4 Submit for review
-
-Still logged in as `admin` (or the author):
-
-```bash
-pnpm setwin -- workflow submit REQ-001
-pnpm setwin -- workflow show REQ-001
-pnpm setwin -- review show REQ-001
-```
-
-Submit moves the version to `IN_REVIEW` and opens approval requests from `approval_policies`. You cannot create a new version while `IN_REVIEW`.
-
-### 5.5 Review findings and approve
-
-Log in as a Product Owner who did **not** author the requirement:
-
-```bash
-pnpm setwin -- login reviewer --password reviewer-pass
-pnpm setwin -- review finding REQ-001 --severity INFO --summary "Acceptance criteria look complete."
-pnpm setwin -- review approve REQ-001 --comment "Looks good"
-pnpm setwin -- workflow show REQ-001
-```
-
-Notes:
-
-- Unresolved **HIGH** findings block approval.
-- Requirement approval expects the `product_owner` role (administrator may bypass the role gate).
-- Authors cannot approve their own artifact unless they are administrator.
-- `workflow approve` and `review approve` both record decisions through the shared review/approval services.
-
-Reject or request changes:
-
-```bash
-pnpm setwin -- review reject REQ-001 --comment "Missing unpaid constraint"
-pnpm setwin -- review request-changes REQ-001 --comment "Clarify time window"
-```
-
-### 5.6 Audit trail
-
-```bash
-pnpm setwin -- login admin --password admin-pass
-pnpm setwin -- audit list
-pnpm setwin -- audit verify
-```
-
-Every important mutation appends a hash-chained audit event.
-
----
-
-## 6. Day-to-day artifact workflow
-
-### Create and version
-
-```bash
-pnpm setwin -- artifact create --project demo --type DESIGN --title "Cancel flow" --content "Service + API"
-pnpm setwin -- artifact show DES-001
-pnpm setwin -- artifact version DES-001 --content "Updated design"
-pnpm setwin -- artifact list --project demo
-```
-
-Approved versions are never rewritten in place. A new version is always a fresh `DRAFT`.
-
-### Relationships
-
-```bash
-pnpm setwin -- relate TST-001 VALIDATES REQ-001
-pnpm setwin -- artifact relations REQ-001
-```
-
-### Policies
-
-```bash
-pnpm setwin -- workflow policies
-pnpm setwin -- review policies
-```
-
-Examples:
-
-| Artifact type | Approvers (default) |
-|---|---|
-| REQUIREMENT / GHERKIN | `product_owner` |
-| DESIGN | `architect` |
-| CODE | `engineering_manager` + `security_reviewer` (parallel) |
-| ARCHITECTURE | `architect` then `engineering_manager` (sequential) |
-| TEST | `qa_reviewer` |
-
-### Delegation and escalation
-
-```bash
-pnpm setwin -- review delegate REQ-001 --to reviewer --role product_owner
-pnpm setwin -- review escalate REQ-001 --to-role engineering_manager --to em
-```
-
----
-
-## 7. Run the API and Web UI
-
-These are **two different processes**. Keep `pnpm dev` running, then open a **second** terminal in the same repo for the Web UI.
-
-| URL | What it is | How to start |
-|---|---|---|
-| `http://127.0.0.1:8000/health` | Fastify API | `pnpm dev` |
-| `http://127.0.0.1:5173` | Vite Web UI | `pnpm web` (second terminal) |
-
-Terminal 1 — API (default `127.0.0.1:8000`):
+Terminal 1, the API:
 
 ```bash
 pnpm dev
 ```
 
-Or:
+Wait until the log says `starting api` on `127.0.0.1:8000`.
 
-```bash
-pnpm setwin -- serve
-```
-
-Leave that running. Health check in a browser: `http://127.0.0.1:8000/health` → `{"status":"ok","name":"SETwin","version":"0.1.0"}`.
-
-Terminal 2 — Web UI (Vite on `http://127.0.0.1:5173`, proxies `/api` to the API):
+Terminal 2, the web app:
 
 ```bash
 pnpm web
 ```
 
-Then open `http://127.0.0.1:5173`. If you see **ERR_CONNECTION_REFUSED** on `:5173`, the Web UI is not running yet — only the API is.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
-If `pnpm web` fails on `esbuild` (pnpm blocked build scripts), edit `pnpm-workspace.yaml` so Vite can build:
-
-```yaml
-packages:
-  - "apps/*"
-  - "packages/*"
-allowBuilds:
-  esbuild: true
-```
-
-Then reinstall and start the UI:
-
-```bash
-pnpm install
-pnpm web
-```
-
-(`pnpm approve-builds` only lists packages still waiting; if you previously selected none, `esbuild` is already recorded as denied and will not appear again.)
-
-In the UI: use **Dashboard → Log in** with username/password (or paste a CLI token under Advanced). Then open Twin Explorer, **Repositories**, Reviews, Approvals, Audit, and AI activity.
+If port 8000 is already in use, an API is already running. Use that one, or stop it and run `pnpm dev` again. If the browser cannot open port 5173, the web app is not running yet.
 
 ---
 
-## 8. Connect a real product repository
+## 3. Open the app and sign in
 
-SETwin is **not** a replacement for Git. Your product repo stays the source of code (and usually of `.feature` / test files). SETwin is the twin that remembers requirements, versions, reviews, approvals, and an indexed code graph.
+1. On the sign-in page, enter the administrator username and password.
+2. Click **Log in**.
 
-```text
-Your product git clone  --register/index-->  SETwin twin (Postgres)
-        |                                         |
-     source code                           REQ / TST / reviews
-     tests / features                      approvals / audit
-```
+The top bar shows whether the database is up, who is signed in, **Refresh**, and **Sign out**. **Refresh** reloads the page you are on.
 
-### 8.1 From the Web UI (recommended)
+Setup changes are administrator-only. If Setup says read-only, sign in as the administrator.
 
-1. Create a twin project (CLI once):  
-   `pnpm setwin -- project create myproduct --name "My Product"`
-2. Sign in on Dashboard.
-3. Open **Repositories** (`http://localhost:5173/repos`).
-4. Choose the project, paste an **absolute local path** to a git checkout the API can read, e.g. `C:\work\my-product`.
-5. Click **Register**, then **Index**.
-6. Use **Symbols** to browse the indexed code graph.
+---
 
-The path must exist on the machine running `pnpm dev` (same laptop for local use).
+## 4. Set up a product
 
-### 8.2 From the CLI
+Open **Setup** in the left menu. Complete the four sections in order.
+
+### 4.1 Create the product
+
+1. Enter a product key: lowercase letters, numbers, and hyphens, such as `orderdemo`.
+2. Enter a display name, such as `Order Demo`.
+3. Click **Create product**.
+4. Click the key in the table so that product is selected for the next sections.
+
+Creating a product also creates its master test plan, named **Master Test Plan - &lt;display name&gt;**. You will see it under **Test Plans**.
+
+### 4.2 Save the tech stack
+
+This is the default language, framework, and test style for generated code. If the git repo already has its own signals (for example `package.json`), those win.
+
+1. Select the product.
+2. Edit the tech stack text if you need to.
+3. Click **Save tech stack**.
+
+### 4.3 Create at least one feature
+
+Stories in Workspace must be attached to a feature before they can be submitted.
+
+1. Select the product.
+2. Enter a feature title and, if you want, a short description.
+3. Click **Create feature**.
+
+### 4.4 Register the git checkout and index it
+
+1. Select the product.
+2. Paste the absolute path to a local git checkout that this computer can read, for example `C:\work\order-demo`.
+3. Click **Register**.
+4. Click **Index**.
+
+The page stays usable while indexing. It shows files read, symbols, edges, and the commit. When it finishes, **Last indexed** shows the time and the short commit id.
+
+Index reads the repo. It does not commit, push, or delete that folder. Do not delete the checkout if you still want SE Twin to remember the code.
+
+Optional, for story and code generation: install [Ollama](https://ollama.com/) and set these in `.env`, then restart `pnpm dev`.
 
 ```bash
-pnpm setwin -- project create myproduct --name "My Product"
-pnpm setwin -- repo register --project myproduct --path C:\work\my-product
-pnpm setwin -- repo list
+SETWIN_OLLAMA_BASE_URL=http://127.0.0.1:11434
+SETWIN_OLLAMA_MODEL=qwen2.5:7b
+```
+
+Without a model, you can still create and edit cards by hand. Generation buttons will fail until a model is available.
+
+---
+
+## 5. Use Workspace
+
+Open **Workspace** and choose the product.
+
+1. Write what the product should do in the prompt at the top.
+2. Click **Create stories**.
+3. On each story, choose a **Feature**, then **Save**.
+4. Click **Submit for approval**.
+5. Click **Accept** when the story is in review. The person who wrote it should not be the only approver, unless they are the administrator.
+6. On an approved story, click **→ Design**.
+7. Review the design, submit it, and accept it. You can attach an image or file on the design card.
+8. On an approved design, click **→ Code+Tests**.
+
+Code is written into the registered repo as uncommitted files. Review the file list and diff on the code card, then submit and accept the code and the tests.
+
+**Delete** on a story is only there while the story is not implemented and its design is not approved.
+
+**Reject** sends the card back. **Agent revise + resubmit** asks the model for a new draft and submits it again.
+
+---
+
+## 6. Use Twin Explorer
+
+Open **Twin Explorer** and choose the product.
+
+- Click a node to select it. The cards below list the artifacts linked to it.
+- When you select a test, those cards show only the nodes directly connected to that test.
+- Right-click a node and choose **Tell me about it** to see who created it, which design it is linked to, and who submitted or approved it.
+
+---
+
+## 7. Use Test Plans
+
+Open **Test Plans**.
+
+The **Master Test Plan** section is at the top. Each product has one plan named **Master Test Plan - &lt;product name&gt;**. Opening it refreshes the plan from the current stories, code, and tests. **Last updated** is the last time that set changed. **Rebaseline** does the same refresh while you are looking at the plan.
+
+Other plans are saved snapshots:
+
+1. Choose a product and a **Since** date and time.
+2. Click **Create plan**.
+3. Click the row to open it.
+
+The breadcrumb at the top is **Test Plans / plan name**. Click **Test Plans** to go back to the list.
+
+The summary is across the top: status, product, window, how many code changes are included, and pass, fail, skipped, and not-run totals. **Release** is at the end of that row. Release locks the name, the since time, and which tests are in the plan. Run results still update after release.
+
+While a plan is **Active**, you can change its name and click **Save name**. A released plan cannot be renamed.
+
+Tests are grouped into four lists:
+
+- Critical path, functional
+- Critical path, non-functional
+- Regression, functional
+- Regression, non-functional
+
+A test is non-functional when its Gherkin has `@non-functional`, `@performance`, `@security`, `@accessibility`, or `@reliability`. Each row shows whether it is Automated or Manual, and the latest run: Passed, Failed, Skipped, or Not run.
+
+Turn on **Include released** to see released plans in the lower list. Master plans stay in the top section.
+
+---
+
+## 8. Reviews, audit, and AI activity
+
+- **Reviews** is the queue of work waiting for a decision.
+- **Audit** is the history of who changed what. It is append-only.
+- **AI activity** lists model calls. To also write each request and response to `data/llm.log`, set `SETWIN_LLM_LOG_REQUESTS=true` in `.env` and restart the API.
+
+---
+
+## 9. When something goes wrong
+
+| What you see | What to do |
+|---|---|
+| Browser cannot open port 5173 | In a second terminal, run `pnpm web`. |
+| `EADDRINUSE` on port 8000 | An API is already running. Use it, or stop that process and run `pnpm dev` again. |
+| Database shows down | Run `docker compose up -d`, then **Refresh**. |
+| Sign-in fails after a reset | Click **Sign out**, then **Log in** again. Old browser tokens do not match a new database. |
+| Setup is read-only | Sign in as the administrator. |
+| Register rejects the path | Use an absolute path to a git checkout on the same machine as `pnpm dev`. |
+| Create stories or Code+Tests fails | Start Ollama, set `SETWIN_OLLAMA_BASE_URL` and `SETWIN_OLLAMA_MODEL`, and restart `pnpm dev`. |
+| A page looks like an old version | Restart `pnpm dev`. The API applies database updates when it starts. |
+
+---
+
+## 10. Start over
+
+To erase every product, story, test plan, and repo registration, and also the users:
+
+```bash
+docker compose down -v
+docker compose up -d
+pnpm setwin -- init
+pnpm setwin -- user create admin --password admin-pass
+```
+
+Then sign out in the browser and log in again. This does not delete the git folders you registered. Those stay on disk.
+
+---
+
+## Command line
+
+The same work can be done from the terminal. Put `--` after `setwin` so pnpm passes the flags through.
+
+```bash
+pnpm setwin -- login admin --password admin-pass
+pnpm setwin -- project create orderdemo --name "Order Demo"
+pnpm setwin -- repo register --project orderdemo --path C:\work\order-demo
 pnpm setwin -- repo index <repositoryId>
-pnpm setwin -- repo symbols <repositoryId>
-```
-
-### 8.3 Requirements and tests from that product
-
-Today these are **twin artifacts**, not an automatic full import of every file in the repo:
-
-| In the product repo | In SETwin |
-|---|---|
-| Source code | Indexed via **Repositories → Index** |
-| Requirement text / docs | `requirement create` or Twin artifacts |
-| `.feature` files | `gherkin create --file … --requirement REQ-…` |
-| Reviews / approvals | `workflow` / `review` (or UI) |
-
-Example — pull a feature file from the product repo into the twin:
-
-```bash
-pnpm setwin -- requirement create "Customers can cancel an unpaid order within 30 minutes." --project myproduct
-pnpm setwin -- gherkin create --project myproduct --file C:\work\my-product\features\cancel.feature --requirement REQ-001
-pnpm setwin -- workflow submit REQ-001
-```
-
-Change impact against that registered repo:
-
-```bash
-pnpm setwin -- change analyze --repository <repositoryId> --base main --head HEAD
-```
-
-**Not built yet as a single “import whole repo as the product” wizard:** automatic discovery of all requirements/tests from arbitrary folder layouts, bi-directional sync of every file, or treating Git as the only store for approved twin state. Register + index + create/link artifacts is the supported path now.
-
----
-
-## 9. AI gateway (optional)
-
-Configure providers in `.env` (see `.env.example`). Ollama-first:
-
-```bash
-# SETWIN_OLLAMA_BASE_URL=http://127.0.0.1:11434
-# SETWIN_OLLAMA_MODEL=qwen2.5:7b
-```
-
-To append each LLM request and response, with start, finish, and duration, to a readable file (off by default):
-
-```bash
-SETWIN_LLM_LOG_REQUESTS=true
-# Default path is data/llm.log
-# SETWIN_LLM_LOG_FILE=./data/llm.log
-# Optional truncate length (default 16000; 0 = no truncate)
-# SETWIN_LLM_LOG_MAX_CHARS=16000
-```
-
-Restart the API after changing these. Each exchange is a plain-text block in that file. The API log also records `llm.log` with `durationMs`.
-
-```bash
-pnpm setwin -- ai complete --prompt "Summarize cancel-order acceptance criteria"
-pnpm setwin -- ai actions
-```
-
-All model calls go through the gateway. Unconfigured providers fail gracefully.
-
----
-
-## 10. MCP server (optional)
-
-```bash
-pnpm mcp
-```
-
-MCP speaks JSON-RPC over stdio and uses the same domain services as CLI/API (no direct database access). Point your MCP client at this process when integrating IDEs or agents.
-
----
-
-## 11. Later capabilities (short reference)
-
-These are available after the core slice works. Use `--help` on each command for flags.
-
-| Area | Commands |
-|---|---|
-| Repository | `repo register`, `repo index`, `repo list`, `repo symbols` |
-| Change | `change analyze`, `change list` (see `pnpm setwin -- change --help`) |
-| Context | `context ingest`, `context search` |
-| AI scrum / coding agents | `agent skills`, `agent propose`, `agent proposals`, `agent coding` |
-| Stories / requirements (PO / QE) | `requirement stories`, `requirement edit`, `requirement submit`, `requirement revise-rejection`, `requirement follow-on`, `requirement gherkin` |
-| Testing | `test ingest`, `test list` |
-| CI/CD | `cicd adapters`, `cicd render` |
-| OpenSecant | `opensecant generate`, `opensecant execute` |
-| OpenVector metrics | `metrics record`, `metrics series`, `metrics events` |
-| Integrations | `integration list`, `integration sync` |
-
-Templates also live under `templates/` and `.github/workflows/` for GitHub Actions / GitLab / Jenkins / Azure DevOps.
-
----
-
-## 12. Common failures
-
-| Symptom | What to check |
-|---|---|
-| `status` shows database unreachable | `docker compose up -d`; port `5432`; `SETWIN_DATABASE_URL` in `.env` |
-| Login required | `pnpm setwin -- login …` or `--token` / `SETWIN_TOKEN` |
-| Cannot approve from DRAFT | `workflow submit` first |
-| Cannot create version while IN_REVIEW | Approve, reject, or request changes first |
-| Approval blocked | Role/permission mismatch; author separation of duties; unresolved HIGH finding; expired `--due` |
-| AI Gherkin failed | Ollama/provider env; `ai actions`; still never auto-approves |
-| Web UI empty / 401 | API running on `:8000`; **Log in** on Dashboard (stale browser tokens after DB reset break login — use Sign out, then Log in again) |
-| `:5173` connection refused | Second terminal: `pnpm web` (API alone is only `:8000`) |
-| `setwin` not recognized | Use `pnpm setwin -- …`, not a bare `setwin` |
-| Repository path rejected | Absolute local git path readable by the API process; project must exist |
-
-Get help for any command:
-
-```bash
 pnpm setwin -- --help
-pnpm setwin -- review --help
-pnpm setwin -- requirement --help
 ```
 
----
-
-## 13. What not to do
-
-- Do not extend the Python prototype under `setwin/` with new product phases.
-- Do not treat AI drafts as approved.
-- Do not rewrite an `APPROVED` version in place—create the next `DRAFT`.
-- Do not commit `.env`, `data/session.json`, or real secrets.
+Login stores a token in `data/session.json`. Do not commit that file or `.env`.

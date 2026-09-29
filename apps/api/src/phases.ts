@@ -9,7 +9,7 @@ import {
   showRequirement,
   updateStory,
 } from "@setwin/requirements";
-import { indexRepository, listRepositories, listSymbols, registerRepository } from "@setwin/repo";
+import { indexRepository, listRepositories, listSymbols, readIndexProgress, registerRepository } from "@setwin/repo";
 import { analyzeChange, getChangeAnalysis } from "@setwin/change";
 import { getGraphNeighborhood, indexProjectContext, retrieveContext } from "@setwin/context";
 import {
@@ -34,7 +34,7 @@ import { executeGeneratedTests, generateTestsFromArtifact, ingestOpenSecantResul
 import { listEngineeringEvents, recordEngineeringEvent, visualizationSeries } from "@setwin/openvector";
 import { listIntegrations, syncIntegrationStatus } from "@setwin/integrations";
 import { NotFoundError, requirePermission, type Principal } from "@setwin/auth";
-import { createArtifact, createArtifactVersion, findExistingReview, listArtifacts, softDeleteArtifact, permanentlyDeleteTestArtifact, getArtifact as getTwinArtifact } from "@setwin/twin";
+import { createArtifact, createArtifactVersion, findExistingReview, listArtifacts, softDeleteArtifact, permanentlyDeleteStoryArtifact, permanentlyDeleteTestArtifact, getArtifact as getTwinArtifact } from "@setwin/twin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getSettings } from "@setwin/config";
 
@@ -230,6 +230,10 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     const query = request.query as { permanent?: string };
     const actor = actorOf(request);
     if (query.permanent === "1" || query.permanent === "true") {
+      const current = await getTwinArtifact(getSettings().databaseUrl, params.key, actor);
+      if (current.type === "STORY" || current.type === "REQUIREMENT" || current.type === "EPIC") {
+        return permanentlyDeleteStoryArtifact(getSettings().databaseUrl, params.key, actor);
+      }
       return permanentlyDeleteTestArtifact(getSettings().databaseUrl, params.key, actor);
     }
     return softDeleteArtifact(getSettings().databaseUrl, params.key, actor);
@@ -318,6 +322,22 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
   app.post("/repos/:id/index", async (request) => {
     const params = request.params as { id: string };
     return indexRepository(getSettings().databaseUrl, params.id, actorOf(request));
+  });
+  app.get("/repos/:id/index-progress", async (request) => {
+    const params = request.params as { id: string };
+    await requirePermission(getSettings().databaseUrl, actorOf(request), "repo:view");
+    return (
+      readIndexProgress(params.id) ?? {
+        status: "idle",
+        filesDone: 0,
+        filesTotal: 0,
+        symbols: 0,
+        edges: 0,
+        commit: "",
+        branch: "",
+        message: "",
+      }
+    );
   });
   app.get("/repos/:id/symbols", async (request) => {
     const params = request.params as { id: string };

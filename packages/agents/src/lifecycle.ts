@@ -9,6 +9,7 @@ import {
   resolveTechStack,
   resolveTestLayout,
   snapshotRepositoryFiles,
+  recallCodeNeighborhood,
   type ProposedFileChange,
 } from "@setwin/repo";
 import {
@@ -16,6 +17,7 @@ import {
   createArtifactVersion,
   createGherkin,
   createRelationship,
+  extractSourcePaths,
   getArtifact,
   getProject,
   listRelationships,
@@ -662,6 +664,25 @@ async function proposeCodeIntoRepository(
         .join("\n\n")
     : "(repository has no indexed source files yet — treat as empty; follow project tech stack + SETwin test layout)";
 
+  const memoryPaths = [
+    ...input.sources.flatMap((row) => extractSourcePaths(row.currentVersion.content)),
+    ...(input.existing ? extractSourcePaths(input.existing.currentVersion.content) : []),
+    ...snapshot.files.map((file) => file.path),
+  ].slice(0, 40);
+  let codeMemory = "";
+  try {
+    const memory = await recallCodeNeighborhood(
+      databaseUrl,
+      { project: input.project, filePaths: memoryPaths },
+      input.actor,
+    );
+    if (memory.chunks.length) {
+      codeMemory = ["## Code memory (symbols around this change)", ...memory.chunks.slice(0, 24)].join("\n");
+    }
+  } catch {
+    codeMemory = "";
+  }
+
   const priorCode = input.existing
     ? `\n## Existing CODE artifact ${input.existing.key}\n${input.existing.currentVersion.content.slice(0, 4000)}\n`
     : "";
@@ -692,6 +713,7 @@ async function proposeCodeIntoRepository(
           "",
           input.context,
           priorCode,
+          codeMemory,
           "## Existing repository files (excerpts)",
           existingFilesBlock,
         ].join("\n"),

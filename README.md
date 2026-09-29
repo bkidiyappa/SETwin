@@ -17,7 +17,7 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 - CLI: `status`, `init`, `serve`, identity, twin, gherkin, workflow, review, `audit`, `requirement`, `ai`, `repo`, `change`, `context`, `agent`, `test`, `cicd`, `opensecant`, `metrics`, `integration`
 - Fastify API routes for the same domain services
 - MCP stdio server (`pnpm mcp`) sharing domain services
-- Web UI (`pnpm web`) — Dashboard, Twin Explorer, Reviews, Approvals, Audit, AI activity
+- Web UI (`pnpm web`) — sign in, then Dashboard, Workspace, Twin Explorer, Test Plans, Reviews, Audit, AI activity, and Setup
 - Hash-chained audit events on mutations
 - AI gateway (Ollama-first; OpenAI/Anthropic/Bedrock/Azure/Gemini adapters)
 - GitHub Actions workflow plus GitLab/Jenkins/ADO templates
@@ -39,13 +39,11 @@ copy .env.example .env
 docker compose up -d
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
-pnpm setwin -- login admin --password admin-pass
-pnpm setwin -- project create demo --name "Demo"
-pnpm dev
-pnpm web
 ```
 
-**Fresh wipe** (delete all twin data): `docker compose down -v` → `up -d` → `init` → recreate admin → Sign out/in on Web.
+Then, in two terminals: `pnpm dev` and `pnpm web`. Open [http://127.0.0.1:5173](http://127.0.0.1:5173), sign in, and follow **Setup** in [Getting started](docs/getting-started.md).
+
+**Start over** (deletes products and users, not your git checkouts): `docker compose down -v`, then `up -d`, `init`, and `user create` again. Sign out and log in.
 
 ## Configuration
 

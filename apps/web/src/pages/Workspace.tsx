@@ -7,7 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   apiDelete,
   apiGet,
@@ -20,6 +20,7 @@ import {
   refreshSession,
   type SessionUser,
 } from "../api";
+import { BrainLoader } from "../components/BrainLoader";
 
 type Project = { key: string; name: string };
 
@@ -205,9 +206,11 @@ function ColumnPane({
 
 export function WorkspacePage() {
   const [session, setSession] = useState<SessionUser | null>(getSessionUser());
+  const [searchParams] = useSearchParams();
+  const projectFromUrl = searchParams.get("project") ?? "";
   const [projects, setProjects] = useState<Project[]>([]);
   const [features, setFeatures] = useState<FeatureOption[]>([]);
-  const [project, setProject] = useState("");
+  const [project, setProject] = useState(projectFromUrl);
   const [prompt, setPrompt] = useState("");
   const [promptHeight, setPromptHeight] = useState(140);
   const [colWidths, setColWidths] = useState([25, 25, 25, 25]);
@@ -228,7 +231,9 @@ export function WorkspacePage() {
   const [selectedTestKeys, setSelectedTestKeys] = useState<Set<string>>(new Set());
   const [bulkRejectReason, setBulkRejectReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
   const [error, setError] = useState("");
+  const pipelineSeq = useRef(0);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const promptResizeRef = useRef<{ startY: number; startH: number } | null>(null);
   const colResizeRef = useRef<{ index: number; startX: number; startWidths: number[] } | null>(null);
@@ -249,17 +254,28 @@ export function WorkspacePage() {
   const loadProjects = useCallback(async () => {
     if (!getToken()) {
       setError("Sign in on the Dashboard first.");
+      setPageLoading(false);
       return;
     }
     setError("");
     try {
       const rows = await apiGet<Project[]>("/projects");
       setProjects(rows);
-      setProject((current) => (rows.some((row) => row.key === current) ? current : rows[0]?.key ?? ""));
+      setProject((current) => {
+        const requested = projectFromUrl;
+        if (requested && rows.some((row) => row.key === requested)) {
+          return requested;
+        }
+        return rows.some((row) => row.key === current) ? current : rows[0]?.key ?? "";
+      });
+      if (rows.length === 0) {
+        setPageLoading(false);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setPageLoading(false);
     }
-  }, []);
+  }, [projectFromUrl]);
 
   const loadFeatures = useCallback(async (projectKey: string) => {
     if (!projectKey || !getToken()) {
@@ -304,11 +320,16 @@ export function WorkspacePage() {
     if (!getToken() || !projectKey) {
       return;
     }
+    const seq = ++pipelineSeq.current;
+    setPageLoading(true);
     try {
       const status = await apiGet<{
         stages: Array<{ stage: { id: string }; artifacts: ArtifactCard[] }>;
         relationships: Rel[];
       }>(`/pipeline/${projectKey}`);
+      if (seq !== pipelineSeq.current) {
+        return;
+      }
       const all = status.stages.flatMap((row) => row.artifacts.map(toCard));
       const featureLinks = new Map<string, string>();
       for (const rel of status.relationships ?? []) {
@@ -328,9 +349,25 @@ export function WorkspacePage() {
       setTests(sortAscending(withFeature.filter((row) => TEST_TYPES.has(row.type))));
       setRelationships(status.relationships ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (seq === pipelineSeq.current) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (seq === pipelineSeq.current) {
+        setPageLoading(false);
+      }
     }
   }, []);
+
+  useEffect(() => {
+    function onRefresh(): void {
+      if (project) {
+        void loadPipeline(project);
+      }
+    }
+    window.addEventListener("setwin-refresh", onRefresh);
+    return () => window.removeEventListener("setwin-refresh", onRefresh);
+  }, [project, loadPipeline]);
 
   useEffect(() => {
     void (async () => {
@@ -488,6 +525,13 @@ export function WorkspacePage() {
     return codeApproved && testApproved;
   }
 
+  function storyDesignIsDone(story: ArtifactCard): boolean {
+    const related = keysLinkedTo(story.key);
+    return designs.some(
+      (row) => related.has(row.key.toUpperCase()) && row.currentVersion.workflowState === "APPROVED",
+    );
+  }
+
   const storiesForFeature = filterFeature
     ? stories.filter((row) => (row.featureKey ?? "").toUpperCase() === filterFeature.toUpperCase())
     : stories;
@@ -564,7 +608,7 @@ export function WorkspacePage() {
       return;
     }
     if (!project) {
-      setError("Create a SETwin project first.");
+      setError("Create an SE Twin project first.");
       return;
     }
     if (!canEditStage("story", session)) {
@@ -1069,6 +1113,36 @@ export function WorkspacePage() {
     }
   }
 
+  async function deleteStoryCard(row: ArtifactCard): Promise<void> {
+    if (!canEditStage("story", session)) {
+      setError("Product owner or admin required to delete stories.");
+      return;
+    }
+    if (storyIsImplemented(row) || storyDesignIsDone(row)) {
+      setError("This story cannot be deleted after its design is approved.");
+      return;
+    }
+    if (!window.confirm(`Permanently delete story ${row.key}? This cannot be undone.`)) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await apiDelete(`/artifacts/${row.key}?permanent=true`);
+      setStories((prev) => prev.filter((item) => item.key !== row.key));
+      pushLog(`Permanently deleted ${row.key}`, "ok");
+      if (project) {
+        await loadPipeline(project);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      pushLog(message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deleteTestCard(row: ArtifactCard): Promise<void> {
     if (!canEditStage("test", session) && !isAdmin(session)) {
       setError("QA or admin required to delete tests.");
@@ -1342,6 +1416,14 @@ export function WorkspacePage() {
               Save
             </button>
           ) : null}
+          {stage === "story" &&
+          canEditStage("story", session) &&
+          !storyIsImplemented(row) &&
+          !storyDesignIsDone(row) ? (
+            <button type="button" disabled={busy} onClick={() => void deleteStoryCard(row)}>
+              Delete
+            </button>
+          ) : null}
           {stage === "test" && (state === "DRAFT" || isAdmin(session)) && canEditStage("test", session) ? (
             <button type="button" disabled={busy} onClick={() => void deleteTestCard(row)}>
               Delete
@@ -1411,6 +1493,11 @@ export function WorkspacePage() {
 
   return (
     <div className="workspace">
+      {pageLoading ? (
+        <div className="brain-loader-overlay">
+          <BrainLoader messages={["Opening the workspace", "Gathering stories", "Reading designs", "Counting tests"]} />
+        </div>
+      ) : null}
       <header className="workspace-header">
         <div>
           <h1>Workspace</h1>

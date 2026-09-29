@@ -19,6 +19,8 @@ type Repository = {
   remoteUrl: string;
   defaultBranch: string;
   lastIndexedAt: string | null;
+  indexedCommit?: string;
+  indexedBranch?: string;
   projectKey?: string;
 };
 
@@ -102,6 +104,7 @@ export function SetupPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [indexing, setIndexing] = useState<Record<string, string>>({});
 
   const isAdmin = hasRole("administrator", session);
 
@@ -360,12 +363,32 @@ export function SetupPage() {
       setError("Only administrators can index repositories.");
       return;
     }
-    setBusy(true);
     setMessage("");
     setError("");
+    setIndexing((current) => ({ ...current, [id]: "Starting index…" }));
+    const timer = window.setInterval(() => {
+      void apiGet<{
+        status: string;
+        filesDone: number;
+        filesTotal: number;
+        symbols: number;
+        edges: number;
+        commit: string;
+        message: string;
+      }>(`/repos/${id}/index-progress`).then((progress) => {
+        if (progress.status === "idle") {
+          return;
+        }
+        const commit = progress.commit ? ` · ${progress.commit.slice(0, 7)}` : "";
+        setIndexing((current) => ({
+          ...current,
+          [id]: `${progress.message || progress.status} · ${progress.filesDone}/${progress.filesTotal} files · ${progress.symbols} symbols · ${progress.edges} edges${commit}`,
+        }));
+      });
+    }, 1000);
     try {
-      const result = await apiPost<{ symbols: number; edges: number }>(`/repos/${id}/index`, {});
-      setMessage(`Indexed symbols=${result.symbols} edges=${result.edges}`);
+      const result = await apiPost<{ symbols: number; edges: number; files: number; commit: string }>(`/repos/${id}/index`, {});
+      setMessage(`Indexed ${result.files} files, ${result.symbols} symbols, ${result.edges} edges at ${result.commit.slice(0, 7)}`);
       await loadRepos(project);
       const rows = await apiGet<SymbolRow[]>(`/repos/${id}/symbols`);
       setSelectedId(id);
@@ -373,7 +396,12 @@ export function SetupPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setBusy(false);
+      window.clearInterval(timer);
+      setIndexing((current) => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
     }
   }
 
@@ -667,11 +695,13 @@ export function SetupPage() {
                   <td>{row.defaultBranch}</td>
                   <td className="muted">
                     {row.lastIndexedAt ? new Date(row.lastIndexedAt).toLocaleString() : "never"}
+                    {row.indexedCommit ? <div>{row.indexedCommit.slice(0, 7)}{row.indexedBranch ? ` · ${row.indexedBranch}` : ""}</div> : null}
+                    {indexing[row.id] ? <div>{indexing[row.id]}</div> : null}
                   </td>
                   <td>
                     <div className="toolbar">
                       {isAdmin ? (
-                        <button type="button" disabled={busy} onClick={() => void indexRepo(row.id)}>
+                        <button type="button" disabled={Boolean(indexing[row.id])} onClick={() => void indexRepo(row.id)}>
                           Index
                         </button>
                       ) : null}

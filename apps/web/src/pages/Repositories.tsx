@@ -91,7 +91,7 @@ export function RepositoriesPage() {
 
   async function register(): Promise<void> {
     if (!project) {
-      setError("Create or select a SETwin project first.");
+      setError("Create or select an SE Twin project first.");
       return;
     }
     setBusy(true);
@@ -146,7 +146,7 @@ export function RepositoriesPage() {
     <div>
       <h1>Repositories</h1>
       <p>
-        Point SETwin at a local git clone of your product. First create a SETwin <strong>project</strong>, then register
+        Point SE Twin at a local git clone of your product. First create an SE Twin <strong>project</strong>, then register
         the repo path and index it.
       </p>
 
@@ -163,9 +163,9 @@ export function RepositoriesPage() {
       {message ? <p>{message}</p> : null}
 
       <div className="panel" style={{ marginBottom: "1rem" }}>
-        <h2>1. SETwin project</h2>
+        <h2>1. SE Twin project</h2>
         <p className="muted">
-          A twin project is required before registering a repo. This is not the git folder name — it is SETwin’s project
+          A twin project is required before registering a repo. This is not the git folder name — it is SE Twin’s project
           key (for example <code>orderdemo</code>).
         </p>
         {projects.length > 0 ? (

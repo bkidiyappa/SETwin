@@ -2,7 +2,7 @@ import { ValidationError, requirePermission, type Principal } from "@setwin/auth
 import {
   createRelationship,
   getArtifact,
-  listArtifacts,
+  listProjectPipeline,
   listRelationships,
   type ArtifactRecord,
   type ArtifactType,
@@ -136,10 +136,13 @@ export async function getPipelineStatus(
   project: string,
   actor?: Principal,
 ): Promise<PipelineStatus> {
-  await requirePermission(databaseUrl, actor, "artifact:view");
-  const all = await listArtifacts(databaseUrl, actor, { project });
+  const loaded = await listProjectPipeline(databaseUrl, project, actor);
+  const all = loaded.artifacts;
   const stages: StageStatus[] = [];
   const edgeSet = new Map<string, { from: string; to: string; type: string }>();
+  for (const rel of loaded.relationships) {
+    edgeSet.set(`${rel.from}|${rel.type}|${rel.to}`, rel);
+  }
 
   for (const stage of SDLC_STAGES) {
     const artifacts = all.filter((row) => stage.artifactTypes.includes(row.type as ArtifactType));
@@ -160,14 +163,6 @@ export async function getPipelineStatus(
       } else {
         canAdvance = true;
         blockedReason = null;
-      }
-    }
-
-    for (const artifact of artifacts) {
-      const rels = await listRelationships(databaseUrl, artifact.key, actor);
-      for (const rel of rels) {
-        const key = `${rel.fromKey}|${rel.type}|${rel.toKey}`;
-        edgeSet.set(key, { from: rel.fromKey, to: rel.toKey, type: rel.type });
       }
     }
 

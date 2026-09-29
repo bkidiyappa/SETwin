@@ -94,18 +94,32 @@ export function unifiedDiffForFile(relativePath: string, before: string | null, 
   return [...header, ...hunkLines].join("\n");
 }
 
-export async function listSourceFiles(root: string, limit = 200): Promise<string[]> {
+export async function gitHead(repoPath: string): Promise<{ commit: string; branch: string }> {
+  const commit = (await execGit(repoPath, ["rev-parse", "HEAD"])).trim();
+  let branch = "HEAD";
+  try {
+    branch = (await execGit(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() || "HEAD";
+  } catch {
+    branch = "HEAD";
+  }
+  return { commit, branch };
+}
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "coverage", ".next", "out", "data"]);
+
+export async function listSourceFiles(root: string, limit?: number): Promise<string[]> {
   const files: string[] = [];
+  const cap = limit ?? Number.POSITIVE_INFINITY;
   async function walk(dir: string): Promise<void> {
-    if (files.length >= limit) {
+    if (files.length >= cap) {
       return;
     }
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (files.length >= limit) {
+      if (files.length >= cap) {
         return;
       }
-      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist" || entry.name === "data") {
+      if (SKIP_DIRS.has(entry.name)) {
         continue;
       }
       const full = path.join(dir, entry.name);

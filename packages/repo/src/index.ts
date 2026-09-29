@@ -1,6 +1,7 @@
 export {
   gitDiff,
   gitDiffNameOnly,
+  gitHead,
   gitRevParse,
   gitUnifiedDiff,
   listSourceFiles,
@@ -14,9 +15,12 @@ export {
   indexRepository,
   listRepositories,
   listSymbols,
+  readIndexProgress,
+  recallCodeNeighborhood,
   registerRepository,
   snapshotRepositoryFiles,
   type AppliedChangeResult,
+  type IndexProgress,
   type ProposedFileChange,
   type RepoFileSnapshot,
 } from "./service.ts";

@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: setwin
+      POSTGRES_PASSWORD: ${SETWIN_DB_PASSWORD:?Set SETWIN_DB_PASSWORD}
+      POSTGRES_DB: setwin
+    volumes:
+      - setwin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U setwin -d setwin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      SETWIN_ENV: production
+      SETWIN_API_HOST: 0.0.0.0
+      SETWIN_API_PORT: 8000
+      SETWIN_DATABASE_URL: postgresql://setwin:${SETWIN_DB_PASSWORD}@postgres:5432/setwin
+      SETWIN_WEB_ORIGIN: ${SETWIN_WEB_ORIGIN:-http://localhost,http://127.0.0.1}
+      SETWIN_COOKIE_SECURE: ${SETWIN_COOKIE_SECURE:-false}
+      SETWIN_DATA_DIR: /app/data
+    volumes:
+      - setwin_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  setwin_pgdata:
+  setwin_data:

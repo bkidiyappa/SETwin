@@ -509,15 +509,31 @@ type CodeProposalJson = {
 };
 
 function parseCodeProposal(aiText: string): CodeProposalJson | null {
-  const raw = extractJsonObject(aiText);
-  if (!raw) {
-    return null;
+  const cleaned = stripModelReasoning(aiText);
+  const candidates: string[] = [];
+  const filesAt = cleaned.indexOf('"files"');
+  if (filesAt >= 0) {
+    const start = cleaned.lastIndexOf("{", filesAt);
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      candidates.push(cleaned.slice(start, end + 1));
+    }
   }
-  try {
-    return JSON.parse(raw) as CodeProposalJson;
-  } catch {
-    return null;
+  const extracted = extractJsonObject(cleaned);
+  if (extracted) {
+    candidates.push(extracted);
   }
+  for (const raw of candidates) {
+    try {
+      const parsed = JSON.parse(raw) as CodeProposalJson;
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.files)) {
+        return parsed;
+      }
+    } catch {
+      // try the next candidate
+    }
+  }
+  return null;
 }
 
 export function formatCodeChangeArtifact(input: {
@@ -696,6 +712,8 @@ async function proposeCodeIntoRepository(
       {
         task: "artifact.code",
         agent: "coding",
+        think: false,
+        temperature: 0.1,
         system: buildRoleSystemPrompt("developer", "propose_implementation"),
         prompt: [
           `Project: ${input.project}`,

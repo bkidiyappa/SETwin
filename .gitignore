@@ -30,6 +30,8 @@ htmlcov/
 # Local SETwin state
 data/*
 !data/.gitkeep
+logs/*
+!logs/.gitkeep
 workspace/*
 !workspace/.gitkeep
 

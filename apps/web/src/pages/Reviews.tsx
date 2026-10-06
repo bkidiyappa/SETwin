@@ -39,12 +39,7 @@ function attachmentOpenUrl(url: string): string {
   if (/^https?:\/\//i.test(url) && !url.includes("/attachments/")) {
     return url;
   }
-  const token = getToken();
-  const path = url.startsWith("/api") ? url : `/api${url.startsWith("/") ? url : `/${url}`}`;
-  if (!token) {
-    return path;
-  }
-  return `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+  return url.startsWith("/api") ? url : `/api${url.startsWith("/") ? url : `/${url}`}`;
 }
 
 export function ReviewsPage() {

@@ -8,23 +8,78 @@ SE Twin remembers a product: its stories, design, code, tests, reviews, and test
 
 ## 1. Install once
 
-You need Node.js 20 or newer, [pnpm](https://pnpm.io/), and Docker Desktop (for PostgreSQL).
+You need Node.js 20 or newer, [pnpm](https://pnpm.io/), and a PostgreSQL server that is already running. Docker is optional. `docker compose up -d` in this folder starts a sample server. If you already have Postgres, point `SETWIN_DATABASE_URL` at it and skip Compose. The app does not require the pgvector extension.
 
 From the project folder:
 
 ```bash
 pnpm install
+```
+
+Create `.env`. On Windows:
+
+```bash
 copy .env.example .env
+```
+
+On macOS or Linux:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and set `SETWIN_DATABASE_URL` to your server. The database named in that URL must already exist. `init` creates tables and roles in it. `init` exits with code 1 when the server cannot be reached.
+
+To use the sample server instead:
+
+```bash
 docker compose up -d
+docker compose ps
+```
+
+Wait until Postgres is healthy, then:
+
+```bash
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 ```
 
-On macOS or Linux, use `cp .env.example .env` instead of `copy`.
+The first user is an administrator. Use a password you will remember; `admin-pass` is only an example.
 
-`init` creates the database tables and the built-in roles. The first user is an administrator. Use a password you will remember; `admin-pass` is only an example.
+### If init prints Command failed with exit code 1
+
+pnpm wraps every failed script the same way. A failed `init` looks like this, and the last line does not say why:
+
+```text
+> setwin@0.1.0 setwin C:\work\SETwin
+> tsx apps/cli/src/index.ts init
+
+ELIFECYCLE  Command failed with exit code 1.
+```
+
+Read the SETwin text above that line. It prints the URL from `.env` with the password hidden, then a check result. These are the three results and what to do for each.
+
+**Check result: not listening on 127.0.0.1:5432**
+
+Nothing accepted a connection. Common causes:
+
+- `.env` was never created, so init used the default URL. On Linux and macOS the Windows command `copy .env.example .env` fails. Run `cp .env.example .env`, set `SETWIN_DATABASE_URL`, and run init again.
+- You already run PostgreSQL somewhere else. Put that host, port, user, password, and database in `SETWIN_DATABASE_URL`. Leave `docker compose` stopped. Docker is optional when this URL reaches your server.
+- You wanted the sample server, and `docker compose up -d` had only just returned. That command exits while Postgres is still starting. Run `docker compose ps` and wait until `postgres` is healthy, then run init again. The sample listens on port 5432 with user `setwin`, password `setwin`, and database `setwin`.
+
+**Check result mentions "does not exist"**
+
+Postgres is up. The database name in the URL is missing. `init` creates tables inside that database. Create the database on your server first (`CREATE DATABASE setwin;` when the URL ends in `/setwin`), then run init again. The Compose sample creates `setwin` for you when its volume is new.
+
+**Check result mentions password or authentication**
+
+Postgres is up and the user or password in `SETWIN_DATABASE_URL` does not match that server. The sample server uses `setwin` / `setwin`.
+
+`pnpm setwin -- status` prints the same database check and does not create tables.
 
 If `user create` says authentication is required, an administrator already exists. Sign in with that account. Do not create a second one unless you mean to.
+
+To run the API, web app, and Postgres together on one host, see [Production](production.md).
 
 ---
 
@@ -203,7 +258,8 @@ Turn on **Include released** to see released plans in the lower list. Master pla
 
 - **Reviews** is the queue of work waiting for a decision.
 - **Audit** is the history of who changed what. It is append-only.
-- **AI activity** lists model calls. To also write each request and response to `data/llm.log`, set `SETWIN_LLM_LOG_REQUESTS=true` in `.env` and restart the API.
+- **AI activity** lists model calls. To also write each request and response to `logs/llm.log`, set `SETWIN_LLM_LOG_REQUESTS=true` in `.env` and restart the API. API logs are written to `logs/app.log`.
+- **Setup → Agent skills** is where an administrator edits an agent's markdown. **Refresh memory** reloads skills, constraints, and guardrails. Restarting the API loads those same files.
 
 ---
 
@@ -213,7 +269,7 @@ Turn on **Include released** to see released plans in the lower list. Master pla
 |---|---|
 | Browser cannot open port 5173 | In a second terminal, run `pnpm web`. |
 | `EADDRINUSE` on port 8000 | An API is already running. Use it, or stop that process and run `pnpm dev` again. |
-| Database shows down | Run `docker compose up -d`, then **Refresh**. |
+| `ELIFECYCLE  Command failed with exit code 1` after `pnpm setwin -- init` | pnpm is reporting the exit status. Read the SETwin lines above it, or the section [If init prints Command failed with exit code 1](#if-init-prints-command-failed-with-exit-code-1). |
 | Sign-in fails after a reset | Click **Sign out**, then **Log in** again. Old browser tokens do not match a new database. |
 | Setup is read-only | Sign in as the administrator. |
 | Register rejects the path | Use an absolute path to a git checkout on the same machine as `pnpm dev`. |
@@ -224,7 +280,9 @@ Turn on **Include released** to see released plans in the lower list. Master pla
 
 ## 10. Start over
 
-To erase every product, story, test plan, and repo registration, and also the users:
+To erase every product, story, test plan, and repo registration, and also the users, empty the database and run `init` again.
+
+Sample server from Compose:
 
 ```bash
 docker compose down -v
@@ -232,6 +290,8 @@ docker compose up -d
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 ```
+
+Your own Postgres: drop and recreate the database named in `SETWIN_DATABASE_URL`, then `pnpm setwin -- init` and `user create` again.
 
 Then sign out in the browser and log in again. This does not delete the git folders you registered. Those stay on disk.
 
@@ -249,4 +309,4 @@ pnpm setwin -- repo index <repositoryId>
 pnpm setwin -- --help
 ```
 
-Login stores a token in `data/session.json`. Do not commit that file or `.env`.
+Login stores a token in `data/session.json`. Do not commit that file or `.env`. The browser does not keep that token. Sign-in sets an httpOnly cookie, and Sign out revokes it.

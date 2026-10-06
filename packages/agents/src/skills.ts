@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -135,7 +135,48 @@ export function getSkillsDirectory(): string {
 
 export function reloadRoleSkills(): Record<string, RoleSkill> {
   cached = loadAllRoleSkills();
+  refreshRoleList();
   return cached;
+}
+
+function skillFileForRole(role: string): string {
+  const key = role.trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_]*$/.test(key) || key.startsWith("_")) {
+    throw new Error(`Unknown role skill: ${role}`);
+  }
+  const filePath = path.resolve(SKILLS_DIR, `${key}.md`);
+  const relative = path.relative(SKILLS_DIR, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Unknown role skill: ${role}`);
+  }
+  if (!existsSync(filePath)) {
+    throw new Error(`Unknown role skill: ${role}`);
+  }
+  return filePath;
+}
+
+export function readRoleSkillMarkdown(role: string): string {
+  return readFileSync(skillFileForRole(role), "utf8");
+}
+
+export function writeRoleSkillMarkdown(role: string, markdown: string): RoleSkill {
+  const key = role.trim().toLowerCase();
+  const filePath = skillFileForRole(key);
+  const text = markdown.replace(/^\uFEFF/, "");
+  if (!text.trim()) {
+    throw new Error("Skill markdown is empty");
+  }
+  const { meta } = parseFrontMatter(text);
+  if (meta.role.trim().toLowerCase() !== key) {
+    throw new Error(`Front matter role must stay ${key}`);
+  }
+  writeFileSync(filePath, text.endsWith("\n") ? text : `${text}\n`, "utf8");
+  reloadRoleSkills();
+  const skill = getRoleSkillsCatalog()[key];
+  if (!skill) {
+    throw new Error(`Unknown role skill: ${role}`);
+  }
+  return skill;
 }
 
 export function getRoleSkillsCatalog(): Record<string, RoleSkill> {

@@ -871,6 +871,65 @@ export async function createRelationship(
   });
 }
 
+/** Point a story at one Feature. An empty feature key removes that link. */
+export async function setStoryFeature(
+  databaseUrl: string,
+  storyKey: string,
+  featureKey: string,
+  actor?: Principal,
+): Promise<void> {
+  const story = await getArtifact(databaseUrl, storyKey, actor);
+  if (story.type !== "STORY" && story.type !== "REQUIREMENT") {
+    throw new ValidationError(`${story.key} is not a story`);
+  }
+  const wanted = featureKey.trim().toUpperCase();
+  if (wanted) {
+    const feature = await getArtifact(databaseUrl, wanted, actor);
+    if (feature.type !== "FEATURE") {
+      throw new ValidationError(`${wanted} is not a FEATURE`);
+    }
+    if (feature.projectKey !== story.projectKey) {
+      throw new ValidationError("Feature and story must belong to the same project");
+    }
+  }
+  const rels = await listRelationships(databaseUrl, story.key, actor);
+  const staleIds: string[] = [];
+  for (const rel of rels) {
+    if (rel.type !== "CONTAINS" || rel.toKey !== story.key) {
+      continue;
+    }
+    const parent = await getArtifact(databaseUrl, rel.fromKey, actor);
+    if (parent.type !== "FEATURE") {
+      continue;
+    }
+    if (parent.key === wanted) {
+      continue;
+    }
+    staleIds.push(rel.id);
+  }
+  if (staleIds.length) {
+    await withDatabase(databaseUrl, async (client) => {
+      for (const id of staleIds) {
+        await client.db.delete(artifactRelationships).where(eq(artifactRelationships.id, id));
+      }
+    });
+  }
+  if (!wanted) {
+    return;
+  }
+  try {
+    await createRelationship(
+      databaseUrl,
+      { from: wanted, to: story.key, type: "CONTAINS", source: "HUMAN" },
+      actor,
+    );
+  } catch (error) {
+    if (!(error instanceof ConflictError)) {
+      throw error;
+    }
+  }
+}
+
 export async function listRelationships(
   databaseUrl: string,
   key: string,

@@ -70,6 +70,7 @@ export {
   createGherkin,
   createProject,
   createRelationship,
+  setStoryFeature,
   getArtifact,
   getGherkin,
   getProject,

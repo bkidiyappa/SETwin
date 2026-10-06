@@ -661,7 +661,11 @@ export function WorkspacePage() {
       }
       const updated = await apiPost<ArtifactCard>(
         stage === "story" ? `/stories/${row.key}` : `/artifacts/${row.key}/save`,
-        { title: row.draftTitle, content },
+        {
+          title: row.draftTitle,
+          content,
+          ...(stage === "story" ? { featureKey: row.featureKey ?? "" } : {}),
+        },
       );
       const card = toCard({ ...updated, featureKey: row.featureKey });
       if (stage === "story") {
@@ -1391,11 +1395,7 @@ export function WorkspacePage() {
                   href={
                     /^https?:\/\//i.test(att.url) && !att.url.includes("/attachments/")
                       ? att.url
-                      : `/api${att.url.startsWith("/") ? att.url : `/${att.url}`}${
-                          getToken()
-                            ? `${att.url.includes("?") ? "&" : "?"}token=${encodeURIComponent(getToken())}`
-                            : ""
-                        }`
+                      : `/api${att.url.startsWith("/") ? att.url : `/${att.url}`}`
                   }
                   target="_blank"
                   rel="noopener noreferrer"

@@ -27,6 +27,8 @@ describe("agents", () => {
   it("exposes all scrum roles and coding agents", () => {
     expect(SCRUM_ROLES).toContain("product_owner");
     expect(SCRUM_ROLES).toContain("reviewer");
+    expect(SCRUM_ROLES).toContain("deployment");
+    expect(SCRUM_ROLES).toContain("observation");
     expect(CODING_AGENTS).toEqual(["opencode", "openhands", "claude-code", "cursor", "windsurf"]);
     expect(createCodingAgentAdapters()).toHaveLength(5);
   });
@@ -38,9 +40,13 @@ describe("agents", () => {
     expect(po.tasks.map((task) => task.id)).toContain("prompt_to_stories");
     expect(po.tasks.map((task) => task.id)).toContain("respond_to_approval_feedback");
     expect(listRoleSkills()).toHaveLength(SCRUM_ROLES.length);
+    const coding = buildRoleSystemPrompt("developer", "propose_implementation");
+    expect(coding).toContain('"files"');
     const prompt = buildRoleSystemPrompt("product_owner", "prompt_to_stories");
     expect(prompt).toContain("Guardrails:");
     expect(prompt).toContain("Prompt → Stories");
+    expect(prompt).toContain("additional details");
+    expect(prompt).toContain("acceptance_criteria");
     expect(prompt).toContain("Never approve");
   });
 

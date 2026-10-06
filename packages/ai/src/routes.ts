@@ -11,6 +11,8 @@ export const LLM_AGENTS = [
   { id: "architecture", label: "Architecture", hint: "Design and architecture drafts" },
   { id: "coding", label: "Coding", hint: "Implementation in the product repository" },
   { id: "tests", label: "Tests", hint: "Gherkin and test generation" },
+  { id: "deployment", label: "Deployment", hint: "Rollout and rollback plans" },
+  { id: "observation", label: "Observation", hint: "Signals, logs, traces, and alerts" },
 ] as const;
 
 export type LlmAgentId = (typeof LLM_AGENTS)[number]["id"];
@@ -35,6 +37,8 @@ const ROLE_AGENT: Record<string, LlmAgentId> = {
   architect: "architecture",
   developer: "coding",
   qe: "tests",
+  deployment: "deployment",
+  observation: "observation",
 };
 
 export function llmAgentForRole(role: string): LlmAgentId | undefined {

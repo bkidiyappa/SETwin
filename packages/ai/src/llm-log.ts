@@ -73,7 +73,7 @@ export function formatLlmExchange(entry: LlmLogEntry): string {
 export function resolveLlmLogPath(): string {
   const settings = getSettings();
   const configured = settings.llmLogFile.trim();
-  const relative = configured || path.join(settings.dataDir, "llm.log");
+  const relative = configured || path.join("logs", "llm.log");
   return path.isAbsolute(relative) ? relative : path.resolve(findProjectRoot(), relative);
 }
 

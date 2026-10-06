@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
 import pino, { type Logger } from "pino";
@@ -19,8 +19,11 @@ const settingsSchema = z.object({
   llmLogRequests: z.boolean().default(false),
   /** Truncate logged prompt/response bodies to this many characters (0 = no truncate). */
   llmLogMaxChars: z.coerce.number().int().min(0).default(16_000),
-  /** Relative or absolute path for the readable LLM log. Empty uses data/llm.log. */
+  /** Relative or absolute path for the readable LLM log. Empty uses logs/llm.log. */
   llmLogFile: z.string().default(""),
+  /** Browser origins allowed to call the API with credentials. Comma-separated. */
+  webOrigins: z.array(z.string()).default(["http://127.0.0.1:5173", "http://localhost:5173"]),
+  cookieSecure: z.boolean().default(false),
 });
 
 export type Settings = z.infer<typeof settingsSchema> & {
@@ -92,6 +95,8 @@ export function createSettings(overrides: Partial<{
   llmLogRequests: boolean;
   llmLogMaxChars: number;
   llmLogFile: string;
+  webOrigins: string[];
+  cookieSecure: boolean;
 }> = {}): Settings {
   const parsed = settingsSchema.parse({
     env: overrides.env ?? process.env.SETWIN_ENV ?? "development",
@@ -112,6 +117,17 @@ export function createSettings(overrides: Partial<{
         ? Number(process.env.SETWIN_LLM_LOG_MAX_CHARS)
         : 16_000),
     llmLogFile: overrides.llmLogFile ?? process.env.SETWIN_LLM_LOG_FILE ?? "",
+    webOrigins:
+      overrides.webOrigins ??
+      (process.env.SETWIN_WEB_ORIGIN ?? "http://127.0.0.1:5173,http://localhost:5173")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+    cookieSecure:
+      overrides.cookieSecure ??
+      (process.env.SETWIN_COOKIE_SECURE !== undefined && process.env.SETWIN_COOKIE_SECURE !== ""
+        ? parseEnvFlag(process.env.SETWIN_COOKIE_SECURE, false)
+        : (overrides.env ?? process.env.SETWIN_ENV ?? "development") === "production"),
   });
   const databaseUrl = normalizeDatabaseUrl(parsed.databaseUrl);
   return {
@@ -146,7 +162,13 @@ export function runWithCorrelationId<T>(correlationId: string, fn: () => T): T {
   return correlationStore.run(correlationId, fn);
 }
 
+export function appLogPath(): string {
+  return path.join(findProjectRoot(), "logs", "app.log");
+}
+
 export function setupLogging(level = "INFO"): Logger {
+  const file = appLogPath();
+  mkdirSync(path.dirname(file), { recursive: true });
   logger = pino(
     {
       name: "setwin",
@@ -161,7 +183,10 @@ export function setupLogging(level = "INFO"): Logger {
         },
       },
     },
-    pino.destination({ dest: 2, sync: true }),
+    pino.multistream([
+      { stream: pino.destination({ dest: 2, sync: true }) },
+      { stream: pino.destination({ dest: file, sync: true, mkdir: true }) },
+    ]),
   );
   return logger;
 }

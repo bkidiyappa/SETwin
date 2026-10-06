@@ -8,7 +8,13 @@ import {
   setCorrelationId,
   setupLogging,
 } from "@setwin/config";
-import { buildStatus, formatInitResult, formatStatus, initialize } from "@setwin/core";
+import {
+  buildStatus,
+  explainUnreachableDatabase,
+  formatInitResult,
+  formatStatus,
+  initialize,
+} from "@setwin/core";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -129,6 +135,7 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
       getLogger().debug({ initialized: !result.alreadyInitialized }, "init completed");
       io.log(formatInitResult(result));
       if (!result.databaseReachable) {
+        io.error(explainUnreachableDatabase(getSettings().databaseUrl, result.databaseDetail));
         throw new CommanderError(1, "databaseUnreachable", result.message);
       }
     });

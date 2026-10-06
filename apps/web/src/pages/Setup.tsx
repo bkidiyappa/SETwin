@@ -688,6 +688,7 @@ export function SetupPage() {
       </div>
 
       <AgentModels isAdmin={isAdmin} />
+      <RoleAgentSkills isAdmin={isAdmin} />
     </div>
   );
 }
@@ -823,6 +824,182 @@ function AgentModels({ isAdmin }: { isAdmin: boolean }) {
           Save agent models
         </button>
       </div>
+    </div>
+  );
+}
+
+type RoleSkillRow = {
+  role: string;
+  displayName: string;
+  mission: string;
+  skills: string[];
+  guardrails: string[];
+};
+
+function RoleAgentSkills({ isAdmin }: { isAdmin: boolean }) {
+  const [skills, setSkills] = useState<RoleSkillRow[]>([]);
+  const [openRole, setOpenRole] = useState("");
+  const [openName, setOpenName] = useState("");
+  const [markdown, setMarkdown] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [modalError, setModalError] = useState("");
+  const [localMessage, setLocalMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const rows = await apiGet<RoleSkillRow[]>("/agents/skills");
+    setSkills([...rows].sort((a, b) => a.displayName.localeCompare(b.displayName)));
+  }, []);
+
+  useEffect(() => {
+    if (!getToken()) {
+      return;
+    }
+    let cancelled = false;
+    void load().catch((err: unknown) => {
+      if (!cancelled) {
+        setLocalError(err instanceof Error ? err.message : String(err));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
+
+  function closeEditor(): void {
+    setOpenRole("");
+    setOpenName("");
+    setMarkdown("");
+    setModalError("");
+  }
+
+  async function edit(row: RoleSkillRow): Promise<void> {
+    setBusy(true);
+    setLocalError("");
+    setModalError("");
+    setLocalMessage("");
+    try {
+      const loaded = await apiGet<{ markdown: string }>(`/agents/skills/${encodeURIComponent(row.role)}/markdown`);
+      setOpenRole(row.role);
+      setOpenName(row.displayName);
+      setMarkdown(loaded.markdown);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function save(): Promise<void> {
+    if (!openRole) {
+      return;
+    }
+    setBusy(true);
+    setModalError("");
+    setLocalMessage("");
+    try {
+      await apiPost(`/agents/skills/${encodeURIComponent(openRole)}/markdown`, { markdown });
+      await apiPost("/agents/skills/reload", {});
+      await load();
+      closeEditor();
+      setLocalMessage("Skill saved. Memory refreshed from the markdown.");
+    } catch (err) {
+      setModalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshMemory(role: string): Promise<void> {
+    setBusy(true);
+    setLocalError("");
+    setLocalMessage("");
+    try {
+      await apiPost("/agents/skills/reload", {});
+      await load();
+      if (openRole === role) {
+        const row = await apiGet<{ markdown: string }>(`/agents/skills/${encodeURIComponent(role)}/markdown`);
+        setMarkdown(row.markdown);
+      }
+      setLocalMessage("Memory refreshed. Skills, constraints, and guardrails were reloaded from markdown.");
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginTop: "1rem" }}>
+      <h2>Agent skills</h2>
+      <p className="muted">
+        Each agent reads its mission, skills, constraints, and guardrails from markdown. Edit saves the file and reloads
+        it. Refresh memory reloads the files without restarting. A restart loads the same files.
+      </p>
+      {localError ? <p className="error">{localError}</p> : null}
+      {localMessage ? <p>{localMessage}</p> : null}
+      <table>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Loaded from markdown</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {skills.map((row) => (
+            <tr key={row.role}>
+              <td>
+                {row.displayName}
+                <div className="muted">{row.mission}</div>
+              </td>
+              <td>
+                <div>{row.skills.length} skills</div>
+                <div className="muted">{row.guardrails.length} guardrails</div>
+              </td>
+              <td>
+                <div className="toolbar">
+                  <button type="button" disabled={busy || !isAdmin} onClick={() => void edit(row)}>
+                    Edit
+                  </button>
+                  <button type="button" disabled={busy || !isAdmin} onClick={() => void refreshMemory(row.role)}>
+                    Refresh memory
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {openRole ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => !busy && closeEditor()}>
+          <div
+            className="modal-panel skill-edit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Edit ${openName}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 style={{ marginTop: 0 }}>{openName}</h2>
+            <p className="muted">{openRole}.md</p>
+            {modalError ? <p className="error">{modalError}</p> : null}
+            <textarea
+              className="workspace-prompt"
+              value={markdown}
+              disabled={busy || !isAdmin}
+              onChange={(event) => setMarkdown(event.target.value)}
+            />
+            <div className="toolbar" style={{ marginTop: "0.75rem" }}>
+              <button type="button" disabled={busy || !isAdmin} onClick={() => void save()}>
+                {busy ? "Saving…" : "Save"}
+              </button>
+              <button type="button" disabled={busy} onClick={closeEditor}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

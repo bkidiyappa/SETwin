@@ -1,6 +1,6 @@
 import { access, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { VERSION, createSettings, getSettings, type Settings } from "@setwin/config";
+import { VERSION, createSettings, getSettings, redactDatabaseUrl, type Settings } from "@setwin/config";
 import {
   applyMigrations,
   checkDatabase,
@@ -105,7 +105,7 @@ export async function initialize(settings: Settings = getSettings()): Promise<In
       migrationsApplied: false,
       initializedAt: null,
       alreadyInitialized: false,
-      message: "Local directories created. Database is unreachable; migrations were not applied.",
+      message: `PostgreSQL is not ready (${health.detail}). Tables were not created.`,
     };
   }
 
@@ -128,6 +128,57 @@ export async function initialize(settings: Settings = getSettings()): Promise<In
     alreadyInitialized,
     message: alreadyInitialized ? "SETwin is already initialized." : "SETwin initialized.",
   };
+}
+
+export function explainUnreachableDatabase(databaseUrl: string, detail: string): string {
+  const databaseName = databaseNameFromUrl(databaseUrl);
+  return [
+    "SETwin init stopped. PostgreSQL is not ready, so no tables were created.",
+    "",
+    `SETWIN_DATABASE_URL: ${redactDatabaseUrl(databaseUrl)}`,
+    `Check result: ${detail}`,
+    `What that means: ${describeDatabaseFailure(detail)}`,
+    "",
+    `init creates tables inside the database named "${databaseName}". Create that database before init. init leaves PostgreSQL installation, startup, and CREATE DATABASE to you.`,
+    "",
+    "Docker is optional. When .env points SETWIN_DATABASE_URL at a PostgreSQL you already run, start that server and skip docker compose.",
+    "The sample server in this repository is for a machine that has no PostgreSQL yet:",
+    "  docker compose up -d",
+    "  docker compose ps",
+    "Wait until the postgres service is healthy. docker compose up -d returns before PostgreSQL accepts connections, and init fails the same way if you run it during that wait.",
+    "",
+    "Create .env before init. On Linux and macOS:",
+    "  cp .env.example .env",
+    "On Windows:",
+    "  copy .env.example .env",
+    "copy is a Windows command. On Linux that command fails, .env is never created, and init uses the default URL 127.0.0.1:5432/setwin.",
+    "",
+    'pnpm then prints "Command failed with exit code 1". That line only means init exited with status 1. The reason is the check result above.',
+    "Run `pnpm setwin -- status` to repeat this check.",
+  ].join("\n");
+}
+
+function databaseNameFromUrl(databaseUrl: string): string {
+  try {
+    const name = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, ""));
+    return name || "(missing database name)";
+  } catch {
+    return "(unreadable URL)";
+  }
+}
+
+function describeDatabaseFailure(detail: string): string {
+  const text = detail.toLowerCase();
+  if (text.includes("not listening")) {
+    return "Nothing accepted a connection on that host and port. PostgreSQL is stopped, the URL host or port is wrong, or the sample container is not publishing port 5432 yet.";
+  }
+  if (text.includes("does not exist")) {
+    return "PostgreSQL answered, and the database named in the URL is missing. Create it, then run init again. The Compose sample creates a database named setwin.";
+  }
+  if (text.includes("authentication") || text.includes("password")) {
+    return "PostgreSQL answered, and the user or password in SETWIN_DATABASE_URL was rejected.";
+  }
+  return "PostgreSQL answered with an error. The check result is that message with the password removed.";
 }
 
 export function formatInitResult(result: InitResult): string {

@@ -23,37 +23,62 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 - Hash-chained audit events on mutations
 - AI gateway (Ollama-first; OpenAI/Anthropic/Bedrock/Azure/Gemini adapters)
 - GitHub Actions workflow plus GitLab/Jenkins/ADO templates
-- PostgreSQL via Docker Compose (`pgvector/pgvector:pg16`)
+- PostgreSQL. `docker compose up -d` starts a sample server. A Postgres you already run is enough when `SETWIN_DATABASE_URL` points at it.
 
 ## Requirements
 
 - Node.js 20+
 - [pnpm](https://pnpm.io/)
-- Docker (optional, for PostgreSQL)
+- PostgreSQL that is already running and reachable. Docker is one way to start it (`docker compose up -d` in this repo). The app does not require the pgvector extension.
 
 ## Quick start
 
-Full walkthrough: **[Getting started](docs/getting-started.md)**. How pipeline, Explorer, and approvals fit together: **[Architecture](docs/architecture.md)**.
+Full walkthrough: **[Getting started](docs/getting-started.md)**. How pipeline, Explorer, and approvals fit together: **[Architecture](docs/architecture.md)**. A single-host install with backups and TLS: **[Production](docs/production.md)**.
 
 ```bash
 pnpm install
-copy .env.example .env
+```
+
+Create `.env` from the example. On Windows: `copy .env.example .env`. On macOS or Linux: `cp .env.example .env`.
+
+`SETWIN_DATABASE_URL` must name a database that already exists on a running Postgres. `init` creates the tables there. It does not install Postgres, start it, or create the database.
+
+On Linux, `copy .env.example .env` is not a command. Use `cp`. If `.env` was never created, `init` uses the default URL `127.0.0.1:5432/setwin`.
+
+To use the sample server instead of your own Postgres:
+
+```bash
 docker compose up -d
+docker compose ps
+```
+
+Wait until the postgres service is healthy. `docker compose up -d` returns before Postgres accepts connections.
+
+```bash
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 ```
 
+If init fails, pnpm prints only this:
+
+```text
+ELIFECYCLE  Command failed with exit code 1.
+```
+
+That line is pnpm reporting the exit status. The SETwin lines above it name `SETWIN_DATABASE_URL` and the check result: nothing listening, the database name is missing, or the password was rejected. The same cases are written out in [Getting started](docs/getting-started.md#if-init-prints-command-failed-with-exit-code-1). `pnpm setwin -- status` repeats the check.
+
 Then, in two terminals: `pnpm dev` and `pnpm web`. Open [http://127.0.0.1:5173](http://127.0.0.1:5173), sign in, and follow **Setup** in [Getting started](docs/getting-started.md).
 
-**Start over** (deletes products and users, not your git checkouts): `docker compose down -v`, then `up -d`, `init`, and `user create` again. Sign out and log in.
+**Start over** deletes products and users, not your git checkouts. With the sample server: `docker compose down -v`, then `up -d`, `init`, and `user create` again. With your own Postgres: drop and recreate that database, then `init` and `user create` again. Sign out and log in.
 
 ## Configuration
 
-Settings are loaded from environment variables prefixed with `SETWIN_`. Copy `.env.example` to `.env`. Status output redacts database passwords. SQLAlchemy-style URLs (`postgresql+psycopg://`) are accepted and normalized.
+Settings are loaded from environment variables prefixed with `SETWIN_`. Copy `.env.example` to `.env`. `SETWIN_DATABASE_URL` is the Postgres SE Twin uses. Status output redacts database passwords. SQLAlchemy-style URLs (`postgresql+psycopg://`) are accepted and normalized.
 
 ## Documentation
 
 - [Getting started (step by step)](docs/getting-started.md)
+- [Production install](docs/production.md)
 - [Architecture](docs/architecture.md)
 - [Third-party notices](THIRD_PARTY.md)
 - [Plan](PLAN.md)

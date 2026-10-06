@@ -21,6 +21,9 @@ import {
   linkArtifacts,
   listProposals,
   listRoleSkills,
+  readRoleSkillMarkdown,
+  reloadRoleSkills,
+  writeRoleSkillMarkdown,
   proposeAsRole,
   proposeFollowOnArtifacts,
   reviseArtifactFromRejection,
@@ -33,7 +36,8 @@ import { listPipelineAdapters, renderPipelineTemplate, type PipelineProvider } f
 import { executeGeneratedTests, generateTestsFromArtifact, ingestOpenSecantResults } from "@setwin/opensecant";
 import { listEngineeringEvents, recordEngineeringEvent, visualizationSeries } from "@setwin/openvector";
 import { listIntegrations, syncIntegrationStatus } from "@setwin/integrations";
-import { NotFoundError, requirePermission, type Principal } from "@setwin/auth";
+import { AuthorizationError, NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
+import { requireActor } from "./guard.ts";
 import { createArtifact, createArtifactVersion, findExistingReview, listArtifacts, softDeleteArtifact, permanentlyDeleteStoryArtifact, permanentlyDeleteTestArtifact, getArtifact as getTwinArtifact } from "@setwin/twin";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getSettings } from "@setwin/config";
@@ -61,7 +65,10 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     }
     return row;
   });
-  app.get("/audit/verify", async () => verifyAuditChain(getSettings().databaseUrl));
+  app.get("/audit/verify", async (request) => {
+    requireActor(request);
+    return verifyAuditChain(getSettings().databaseUrl);
+  });
 
 
   app.get("/ai/actions", async (request) => listAiActions(getSettings().databaseUrl, actorOf(request)));
@@ -96,13 +103,13 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
   });
   app.post("/stories/:key", async (request, reply) => {
     const params = request.params as { key: string };
-    const body = request.body as { title?: string; content?: string };
+    const body = request.body as { title?: string; content?: string; featureKey?: string };
     if (!body?.content) {
       return reply.code(400).send({ error: "content is required" });
     }
     return updateStory(
       getSettings().databaseUrl,
-      { key: params.key, title: body.title, content: body.content },
+      { key: params.key, title: body.title, content: body.content, featureKey: body.featureKey },
       actorOf(request),
     );
   });
@@ -371,8 +378,50 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     return getGraphNeighborhood(getSettings().databaseUrl, params.key, actorOf(request));
   });
 
-  app.get("/agents/skills", async () => listRoleSkills());
+  app.get("/agents/skills", async (request) => {
+    requireActor(request);
+    return listRoleSkills();
+  });
+  app.post("/agents/skills/reload", async (request) => {
+    const actor = requireActor(request);
+    if (!actor.roles.includes("administrator")) {
+      throw new AuthorizationError("Administrator role required");
+    }
+    reloadRoleSkills();
+    return { skills: listRoleSkills() };
+  });
+  app.get("/agents/skills/:role/markdown", async (request) => {
+    requireActor(request);
+    const params = request.params as { role: string };
+    try {
+      return { role: params.role, markdown: readRoleSkillMarkdown(params.role) };
+    } catch (error) {
+      throw new NotFoundError(error instanceof Error ? error.message : `Unknown role: ${params.role}`);
+    }
+  });
+  app.post("/agents/skills/:role/markdown", async (request, reply) => {
+    const actor = requireActor(request);
+    if (!actor.roles.includes("administrator")) {
+      throw new AuthorizationError("Administrator role required");
+    }
+    const params = request.params as { role: string };
+    const body = request.body as { markdown?: string };
+    if (typeof body?.markdown !== "string") {
+      return reply.code(400).send({ error: "markdown is required" });
+    }
+    try {
+      const skill = writeRoleSkillMarkdown(params.role, body.markdown);
+      return { skill, markdown: readRoleSkillMarkdown(params.role) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save skill";
+      if (/unknown role/i.test(message)) {
+        throw new NotFoundError(message);
+      }
+      throw new ValidationError(message);
+    }
+  });
   app.get("/agents/skills/:role", async (request, reply) => {
+    requireActor(request);
     const params = request.params as { role: string };
     try {
       return getRoleSkill(params.role);
@@ -418,8 +467,12 @@ export function registerPhaseRoutes(app: FastifyInstance): void {
     );
   });
 
-  app.get("/cicd/adapters", async () => listPipelineAdapters());
+  app.get("/cicd/adapters", async (request) => {
+    requireActor(request);
+    return listPipelineAdapters();
+  });
   app.get("/cicd/templates/:provider", async (request, reply) => {
+    requireActor(request);
     const params = request.params as { provider: PipelineProvider };
     try {
       return { provider: params.provider, template: renderPipelineTemplate(params.provider) };

@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { Principal } from "@setwin/auth";
+import { ValidationError, type Principal } from "@setwin/auth";
 import { findProjectRoot, getSettings } from "@setwin/config";
 import { getArtifact } from "@setwin/twin";
 
@@ -24,6 +24,31 @@ function actorOf(request: FastifyRequest): Principal | undefined {
   return request.actor;
 }
 
+function assertSafeSegment(value: string, label: string): string {
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    throw new ValidationError(`Invalid ${label}`);
+  }
+  if (!decoded || decoded.includes("..") || decoded.includes("/") || decoded.includes("\\") || decoded.includes("\0")) {
+    throw new ValidationError(`Invalid ${label}`);
+  }
+  return decoded;
+}
+
+function attachmentFile(artifactKey: string, fileId: string): string {
+  const key = assertSafeSegment(artifactKey, "artifact").toUpperCase();
+  const id = assertSafeSegment(fileId, "attachment");
+  const root = path.resolve(attachmentsRoot());
+  const filePath = path.resolve(root, key, id);
+  const relative = path.relative(root, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new ValidationError("Invalid attachment path");
+  }
+  return filePath;
+}
+
 function attachmentsRoot(): string {
   const settings = getSettings();
   const root = path.isAbsolute(settings.dataDir)
@@ -37,7 +62,7 @@ function safeName(name: string): string {
 }
 
 async function listForArtifact(artifactKey: string): Promise<AttachmentMeta[]> {
-  const dir = path.join(attachmentsRoot(), artifactKey.toUpperCase());
+  const dir = path.join(attachmentsRoot(), assertSafeSegment(artifactKey, "artifact").toUpperCase());
   try {
     const names = await readdir(dir);
     const rows: AttachmentMeta[] = [];
@@ -85,7 +110,7 @@ export function registerAttachmentRoutes(app: FastifyInstance): void {
     };
 
     const artifact = await getArtifact(getSettings().databaseUrl, params.key, actorOf(request));
-    const dir = path.join(attachmentsRoot(), artifact.key);
+    const dir = path.join(attachmentsRoot(), assertSafeSegment(artifact.key, "artifact").toUpperCase());
     await mkdir(dir, { recursive: true });
 
     if (body.referenceUrl?.trim()) {
@@ -129,16 +154,19 @@ export function registerAttachmentRoutes(app: FastifyInstance): void {
   app.get("/attachments/:artifactKey/:fileId", async (request, reply) => {
     const params = request.params as { artifactKey: string; fileId: string };
     await getArtifact(getSettings().databaseUrl, params.artifactKey, actorOf(request));
-    const filePath = path.join(attachmentsRoot(), params.artifactKey.toUpperCase(), params.fileId);
+    const filePath = attachmentFile(params.artifactKey, params.fileId);
     try {
       const metaRaw = await readFile(`${filePath}.meta.json`, "utf8");
       const meta = JSON.parse(metaRaw) as AttachmentMeta;
       if (meta.mimeType === "text/uri-list") {
-        return reply.redirect(meta.url);
+        return { url: meta.url };
       }
       const data = await readFile(filePath);
       return reply.type(meta.mimeType || "application/octet-stream").send(data);
-    } catch {
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        throw error;
+      }
       return reply.code(404).send({ error: "Attachment not found" });
     }
   });
@@ -150,9 +178,8 @@ export function registerAttachmentRoutes(app: FastifyInstance): void {
     if (state !== "DRAFT" && state !== "REJECTED" && state !== "CHANGES_REQUESTED") {
       return reply.code(400).send({ error: "Attachments can only be removed before submit (DRAFT) or while revising" });
     }
-    const dir = path.join(attachmentsRoot(), artifact.key.toUpperCase());
-    const fileId = decodeURIComponent(params.fileId);
-    const filePath = path.join(dir, fileId);
+    const filePath = attachmentFile(artifact.key, params.fileId);
+    const fileId = path.basename(filePath);
     const metaPath = `${filePath}.meta.json`;
     try {
       await unlink(metaPath).catch(() => undefined);

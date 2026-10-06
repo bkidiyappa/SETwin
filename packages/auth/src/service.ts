@@ -15,7 +15,31 @@ import { DEFAULT_ROLES, PERMISSIONS, type PermissionKey } from "./catalog.ts";
 import { AuthenticationError, AuthorizationError, ConflictError, NotFoundError } from "./errors.ts";
 import { hashPassword, hashToken, newSessionToken, verifyPassword } from "./passwords.ts";
 
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 10;
+const loginFailures = new Map<string, { count: number; resetAt: number }>();
+
+export function assertLoginAllowed(key: string): void {
+  const row = loginFailures.get(key);
+  if (row && row.resetAt > Date.now() && row.count >= LOGIN_MAX_FAILURES) {
+    throw new AuthenticationError("Too many sign-in attempts. Try again in a few minutes.");
+  }
+}
+
+export function recordLoginFailure(key: string): void {
+  const now = Date.now();
+  const row = loginFailures.get(key);
+  if (!row || row.resetAt <= now) {
+    loginFailures.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  row.count += 1;
+}
+
+export function clearLoginFailures(key: string): void {
+  loginFailures.delete(key);
+}
 
 export type Principal = {
   id: string;
@@ -272,20 +296,29 @@ export async function login(
   databaseUrl: string,
   username: string,
   password: string,
+  options?: { ip?: string },
 ): Promise<{ token: string; user: Principal }> {
+  const name = username.trim().toLowerCase();
+  const limitKey = `${name}|${options?.ip ?? ""}`;
+  assertLoginAllowed(limitKey);
   return withDatabase(databaseUrl, async (client) => {
-    const user = (
-      await client.db.select().from(users).where(eq(users.username, username.trim().toLowerCase()))
-    )[0];
+    const user = (await client.db.select().from(users).where(eq(users.username, name)))[0];
     if (!user || user.disabled) {
+      recordLoginFailure(limitKey);
       throw new AuthenticationError("Invalid username or password");
     }
-    const ok = await verifyPassword(password, user.passwordHash, user.passwordSalt);
+    const ok = await verifyPassword(password, user.passwordHash, user.passwordSalt, user.passwordParams);
     if (!ok) {
+      recordLoginFailure(limitKey);
       throw new AuthenticationError("Invalid username or password");
     }
+    clearLoginFailures(limitKey);
     const token = newSessionToken();
     const now = new Date();
+    await client.db
+      .update(authSessions)
+      .set({ revokedAt: now })
+      .where(and(eq(authSessions.userId, user.id), isNull(authSessions.revokedAt)));
     await client.db.insert(authSessions).values({
       id: randomUUID(),
       userId: user.id,
@@ -327,6 +360,18 @@ export async function authenticate(databaseUrl: string, token: string): Promise<
   });
 }
 
+export async function logout(databaseUrl: string, token: string): Promise<void> {
+  if (!token) {
+    return;
+  }
+  await withDatabase(databaseUrl, async (client) => {
+    await client.db
+      .update(authSessions)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(authSessions.tokenHash, hashToken(token)), isNull(authSessions.revokedAt)));
+  });
+}
+
 export async function requirePermission(
   databaseUrl: string,
   actor: Principal | undefined,
@@ -358,6 +403,7 @@ async function insertUser(
     displayName: input.displayName?.trim() || username,
     passwordHash: secret.hash,
     passwordSalt: secret.salt,
+    passwordParams: secret.params,
     disabled: false,
     createdAt: now,
     updatedAt: now,

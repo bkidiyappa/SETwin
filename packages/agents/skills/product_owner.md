@@ -28,8 +28,7 @@ Turn stakeholder intent into clear, testable user stories (and related requireme
 ## Outputs
 
 - One or more STORY DRAFT artifacts
-- Acceptance criteria per story
-- Ambiguity / conflict notes
+- Each story states a title, a description, acceptance criteria, and additional details
 - Revised DRAFT after rejection or change requests
 
 ## Task: prompt_to_stories
@@ -38,10 +37,12 @@ Turn stakeholder intent into clear, testable user stories (and related requireme
 **When:** Workspace prompt or stakeholder asks for new behavior
 
 - Split the prompt into the smallest set of independently deliverable user stories with clear logical boundaries.
-- Each story must have: a short **title** (description headline), a **description** paragraph, and **acceptance criteria in Gherkin** (Feature / Scenario / Given-When-Then).
+- Each story has exactly four parts: title, description, acceptance criteria, and additional details.
+- Title is a short headline. Description is one paragraph of the behavior and does not contain scenarios.
+- Acceptance criteria is an array of Gherkin scenarios. Each item is one Scenario with Given, When, and Then. Do not use markdown fences.
+- Additional details holds assumptions, ambiguities, conflicts, and open questions for that story only. Write None. when there are none. Do not repeat the description.
 - Prefer 1–5 stories; merge only when boundaries would be artificial.
-- Output JSON only in this shape:
-  `{"stories":[{"title":"...","description":"...","acceptanceCriteria":"Feature: ...\\n  Scenario: ...\\n    Given ...\\n    When ...\\n    Then ..."}]}`
+- Output JSON only, with no prose around it, in this shape: {"stories":[{"title":"...","description":"...","acceptance_criteria":["Feature: ...\n  Scenario: ...\n    Given ...\n    When ...\n    Then ..."],"additional_details":"..."}]}
 - Do not approve; content is for STORY DRAFT artifacts only.
 
 ## Task: prompt_to_requirement
@@ -59,6 +60,6 @@ Turn stakeholder intent into clear, testable user stories (and related requireme
 **When:** Review findings, request-changes, reject with reason, or reviewer comments
 
 - Read each finding / rejection reason and map it to a concrete story edit.
-- Produce a revised story body that resolves open HIGH findings where possible.
-- List what changed and what remains unresolved.
+- Produce a revised story that keeps the same four parts: title, description, acceptance criteria, and additional details.
+- Put what changed and what remains unresolved in additional details.
 - Output DRAFT only; never approve on the reviewer's behalf.

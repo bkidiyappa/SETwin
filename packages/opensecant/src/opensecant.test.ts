@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { ValidationError } from "@setwin/auth";
 import { generateTestsFromArtifact, openSecantFile, openSecantSlug } from "./index.ts";
 
 describe("opensecant", () => {
   it("exports generation API", () => {
     expect(typeof generateTestsFromArtifact).toBe("function");
+  });
+
+  it("sends operators to Automate instead of inventing scenarios", async () => {
+    await expect(generateTestsFromArtifact("postgresql://unused", { key: "TST-001", project: "demo" })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 
   it("writes an OpenSecant script from a Gherkin scenario", () => {

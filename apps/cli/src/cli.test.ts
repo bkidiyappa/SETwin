@@ -72,7 +72,10 @@ describe("cli", () => {
     clearSettingsCache();
     const result = await invoke(["init"]);
     expect(result.code).toBe(1);
-    expect(result.stdout).toContain("Database is unreachable");
+    expect(result.stdout).toContain("PostgreSQL is not ready");
+    expect(result.stderr).toContain("Command failed with exit code 1");
+    expect(result.stderr).toContain("not listening on 127.0.0.1:1");
+    expect(result.stderr).not.toContain("super-secret");
     expect(result.stdout).not.toContain("super-secret");
     await rm(root, { recursive: true, force: true });
     delete process.env.SETWIN_DATABASE_URL;

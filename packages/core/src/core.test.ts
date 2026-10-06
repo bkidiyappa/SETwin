@@ -2,7 +2,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createSettings } from "@setwin/config";
-import { buildStatus, formatStatus, initialize } from "./index.ts";
+import { buildStatus, explainUnreachableDatabase, formatStatus, initialize } from "./index.ts";
 import { describe, expect, it } from "vitest";
 
 describe("status", () => {
@@ -34,7 +34,16 @@ describe("initialize", () => {
     });
     const result = await initialize(settings);
     expect(result.databaseReachable).toBe(false);
-    expect(result.message).toContain("Database is unreachable");
+    expect(result.message).toContain("PostgreSQL is not ready");
+    expect(result.databaseDetail).toContain("not listening");
+    const explanation = explainUnreachableDatabase(settings.databaseUrl, result.databaseDetail);
+    expect(explanation).toContain("Command failed with exit code 1");
+    expect(explanation).toContain("cp .env.example .env");
+    expect(explanation).toContain('database named "setwin"');
+    expect(explanation).not.toContain("super-secret");
+    expect(explainUnreachableDatabase(settings.databaseUrl, 'database "setwin" does not exist')).toContain(
+      "database named in the URL is missing",
+    );
     await access(settings.dataDir);
     await access(settings.workspaceDir);
     await rm(root, { recursive: true, force: true });

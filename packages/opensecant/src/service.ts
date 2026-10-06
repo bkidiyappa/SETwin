@@ -3,51 +3,19 @@ import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { recordAuditEvent } from "@setwin/audit";
 import { ConflictError, NotFoundError, ValidationError, requirePermission, type Principal } from "@setwin/auth";
 import { testAutomationLinks, testPlanRevisions, testPlans, withDatabase } from "@setwin/database";
 import { applyProposedChanges, listRepositories } from "@setwin/repo";
 import { ingestTestRun, type IngestedResult } from "@setwin/testing";
-import { createArtifact, getArtifact, getTestPlan } from "@setwin/twin";
+import { getArtifact, getTestPlan } from "@setwin/twin";
 import { openSecantFile, openSecantSlug, safeScriptPath } from "./script.ts";
 
 export async function generateTestsFromArtifact(
-  databaseUrl: string,
-  input: { key: string; project: string },
-  actor?: Principal,
+  _databaseUrl: string,
+  _input: { key: string; project: string },
+  _actor?: Principal,
 ): Promise<{ testKey: string; scenarios: string[] }> {
-  const principal = await requirePermission(databaseUrl, actor, "test:create");
-  const artifact = await getArtifact(databaseUrl, input.key, principal);
-  const scenarios = [
-    `validates ${artifact.key} happy path`,
-    `rejects invalid input for ${artifact.key}`,
-    `records audit for ${artifact.key}`,
-  ];
-  const content = [
-    `# Generated tests for ${artifact.key}`,
-    "",
-    ...scenarios.map((scenario, index) => `${index + 1}. ${scenario}`),
-  ].join("\n");
-  const testArtifact = await createArtifact(
-    databaseUrl,
-    {
-      project: input.project,
-      type: "TEST",
-      title: `OpenSecant tests for ${artifact.key}`,
-      content,
-      provenanceSource: "AI_INFERRED",
-    },
-    principal,
-  );
-  await recordAuditEvent(databaseUrl, {
-    action: "opensecant.generate",
-    entityType: "artifact",
-    entityId: testArtifact.id,
-    entityKey: testArtifact.key,
-    after: { source: artifact.key, scenarios },
-    actor: principal,
-  });
-  return { testKey: testArtifact.key, scenarios };
+  throw new ValidationError("Use Automate on the master test plan to create an OpenSecant script.");
 }
 
 export async function executeGeneratedTests(
@@ -243,13 +211,20 @@ async function runOpenSecantScript(databaseUrl: string, project: string, scriptP
 }
 
 function spawnOpenSecant(cwd: string, arg: string): Promise<{ code: number; tail: string; durationMs: number }> {
+  if (!/^[A-Za-z0-9_./-]+$/.test(arg) || arg.split("/").includes("..")) {
+    return Promise.reject(new ValidationError("Invalid OpenSecant script path"));
+  }
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn("npx", ["opensecant", arg], {
-      cwd,
-      shell: process.platform === "win32",
-      env: { ...process.env, OPENSECANT_SKIP_INTERACTIVE_PAUSE: "true" },
-    });
+    const env = { ...process.env, OPENSECANT_SKIP_INTERACTIVE_PAUSE: "true" };
+    const child =
+      process.platform === "win32"
+        ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npx", "opensecant", arg], {
+            cwd,
+            windowsHide: true,
+            env,
+          })
+        : spawn("npx", ["opensecant", arg], { cwd, shell: false, env });
     let text = "";
     const take = (chunk: Buffer) => {
       text = `${text}${chunk.toString()}`.slice(-4000);

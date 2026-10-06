@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
-import { apiGet, clearToken, getSessionUser, getToken, onTokenChange } from "./api";
+import { apiGet, getSessionUser, getToken, onTokenChange, refreshSession, signOut } from "./api";
 import { DashboardPage } from "./pages/Dashboard";
 import { LoginPage } from "./pages/Login";
 import { WorkspacePage } from "./pages/Workspace";
@@ -30,6 +30,24 @@ type SystemStatus = {
   initialized: boolean;
 };
 
+async function loadSystemStatus(): Promise<SystemStatus> {
+  let databaseReachable = false;
+  try {
+    const health = await apiGet<{ status?: string; databaseReachable?: boolean }>("/health");
+    databaseReachable = health.status === "ok" || health.databaseReachable === true;
+  } catch {
+    databaseReachable = false;
+  }
+  let initialized = false;
+  try {
+    const detail = await apiGet<{ initialized?: boolean }>("/status");
+    initialized = Boolean(detail.initialized);
+  } catch {
+    initialized = false;
+  }
+  return { databaseReachable, initialized };
+}
+
 export function App() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSE_KEY) === "1");
   const [signedIn, setSignedIn] = useState(() => Boolean(getToken()));
@@ -43,11 +61,23 @@ export function App() {
   useEffect(() => onTokenChange(() => setSignedIn(Boolean(getToken()))), []);
 
   useEffect(() => {
+    let cancelled = false;
+    void refreshSession().then((user) => {
+      if (!cancelled) {
+        setSignedIn(Boolean(user));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!signedIn) {
       return;
     }
     let cancelled = false;
-    void apiGet<SystemStatus>("/status")
+    void loadSystemStatus()
       .then((next) => {
         if (!cancelled) {
           setStatus(next);
@@ -111,7 +141,7 @@ export function App() {
           <button
             type="button"
             onClick={() => {
-              void apiGet<SystemStatus>("/status")
+              void loadSystemStatus()
                 .then(setStatus)
                 .catch(() => setStatus(null));
               window.dispatchEvent(new Event("setwin-refresh"));
@@ -119,7 +149,7 @@ export function App() {
           >
             Refresh
           </button>
-          <button type="button" className="topbar-signout" onClick={() => clearToken()}>
+          <button type="button" className="topbar-signout" onClick={() => void signOut()}>
             Sign out
           </button>
         </header>

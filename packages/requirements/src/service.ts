@@ -8,6 +8,7 @@ import {
   createGherkin,
   createRelationship,
   getArtifact,
+  setStoryFeature,
   parseGherkin,
   type ArtifactRecord,
   type GherkinRecord,
@@ -156,18 +157,15 @@ export async function createStoriesFromPrompt(
   return { stories, aiStatus: "ok", prompt };
 }
 
-export function formatStoryBody(description: string, acceptanceCriteria: string): string {
-  const desc = description.trim();
-  let gherkin = acceptanceCriteria.trim();
-  if (gherkin && !/^Feature:/im.test(gherkin)) {
+export function formatStoryBody(description: string, acceptanceCriteria: string, additionalDetails = ""): string {
+  const desc = description.trim() || "None.";
+  let criteria = acceptanceCriteria.trim();
+  if (criteria && !/^Feature:/im.test(criteria) && !/^\s*Scenario:/im.test(criteria)) {
     const headline = desc.split(/[.!\n]/)[0] || "Story";
-    gherkin = [`Feature: ${headline}`, "", gherkin].join("\n");
+    criteria = [`Feature: ${headline}`, "", criteria].join("\n");
   }
-  const parts = ["## Description", desc];
-  if (gherkin) {
-    parts.push("", "## Acceptance Criteria", "", "```gherkin", gherkin, "```");
-  }
-  return parts.join("\n");
+  const details = additionalDetails.trim() || "None.";
+  return ["Description", desc, "", "Acceptance Criteria", criteria || "None.", "", "Additional Details", details].join("\n");
 }
 
 function plainText(value: unknown): string {
@@ -230,23 +228,58 @@ function acceptanceToGherkin(value: unknown, title: string): string {
   return blockToGherkin(value, title);
 }
 
-function storyNotes(value: unknown): string {
-  if (!Array.isArray(value)) {
-    return "";
+function detailsText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
   }
-  const lines = value.flatMap((row) => {
-    if (!row || typeof row !== "object") {
-      return [];
+  if (Array.isArray(value)) {
+    const lines = value.flatMap((row) => {
+      if (typeof row === "string") {
+        const text = row.trim();
+        return text ? [text.startsWith("- ") ? text : `- ${text}`] : [];
+      }
+      if (!row || typeof row !== "object") {
+        return [];
+      }
+      const record = row as Record<string, unknown>;
+      const description = plainText(record.description ?? record.note ?? record.text);
+      if (!description) {
+        return [];
+      }
+      const kind = plainText(record.type);
+      return [`- ${kind ? `${kind}: ` : ""}${description}`];
+    });
+    return lines.join("\n");
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const lines: string[] = [];
+    for (const key of ["ambiguity", "conflict", "assumption", "assumptions", "open_questions"]) {
+      const items = record[key];
+      const label = key.replaceAll("_", " ");
+      if (typeof items === "string" && items.trim()) {
+        lines.push(`- ${label}: ${items.trim()}`);
+      } else if (Array.isArray(items)) {
+        for (const item of items) {
+          const text = plainText(item);
+          if (text) {
+            lines.push(`- ${label}: ${text}`);
+          }
+        }
+      }
     }
-    const record = row as Record<string, unknown>;
-    const description = plainText(record.description ?? record.note ?? record.text);
-    if (!description) {
-      return [];
-    }
-    const kind = plainText(record.type);
-    return [`- ${kind ? `${kind}: ` : ""}${description}`];
-  });
-  return lines.length ? ["## Notes", ...lines].join("\n") : "";
+    return lines.join("\n");
+  }
+  return "";
+}
+
+function storyRows(parsed: Record<string, unknown>): Array<Record<string, unknown>> | null {
+  const candidate = parsed.stories ?? parsed.STORY_DRAFT ?? parsed.story_draft;
+  if (!Array.isArray(candidate) || candidate.length === 0) {
+    return null;
+  }
+  const rows = candidate.filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
+  return rows.length ? rows : null;
 }
 
 export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryDraft[] {
@@ -255,21 +288,18 @@ export function parseStoryDrafts(aiText: string, fallbackPrompt: string): StoryD
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]) as {
-          stories?: Array<Record<string, unknown>>;
-          ambiguity_conflicts?: unknown;
-          notes?: unknown;
-        };
-        if (Array.isArray(parsed.stories) && parsed.stories.length) {
-          const notes = storyNotes(parsed.ambiguity_conflicts ?? parsed.notes);
-          return parsed.stories
+        const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+        const rows = storyRows(parsed);
+        if (rows) {
+          const shared = detailsText(parsed.ambiguity_conflicts ?? parsed.ambiguity_conflict_notes ?? parsed.notes);
+          return rows
             .map((row, index) => {
               const title = (plainText(row.title) || "Story").slice(0, 120);
               const description = plainText(row.description ?? row.content) || title;
               const ac = acceptanceToGherkin(row.acceptanceCriteria ?? row.acceptance_criteria, title);
-              const body = formatStoryBody(description, ac);
-              const content = index === 0 && notes ? `${body}\n\n${notes}` : body;
-              return { title, content };
+              const own = detailsText(row.additional_details ?? row.additionalDetails);
+              const details = [own, index === 0 ? shared : ""].filter(Boolean).join("\n");
+              return { title, content: formatStoryBody(description, ac, details) };
             })
             .filter((row) => row.content);
         }
@@ -331,7 +361,7 @@ export async function createRequirementFromPrompt(
 
 export async function updateStory(
   databaseUrl: string,
-  input: { key: string; title?: string; content: string },
+  input: { key: string; title?: string; content: string; featureKey?: string },
   actor?: Principal,
 ): Promise<ArtifactRecord & { checks: RequirementChecks }> {
   await requirePermission(databaseUrl, actor, "requirement:create");
@@ -356,6 +386,9 @@ export async function updateStory(
     },
     actor,
   );
+  if (input.featureKey !== undefined && (updated.type === "STORY" || updated.type === "REQUIREMENT")) {
+    await setStoryFeature(databaseUrl, updated.key, input.featureKey, actor);
+  }
   const checks = analyzeRequirement(content);
   await recordAuditEvent(databaseUrl, {
     action: "story.update",

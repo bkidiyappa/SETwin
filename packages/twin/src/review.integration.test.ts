@@ -52,6 +52,7 @@ async function insertAdmin(databaseUrl: string, username: string, password: stri
       displayName: username,
       passwordHash: secret.hash,
       passwordSalt: secret.salt,
+      passwordParams: secret.params,
       disabled: false,
       createdAt: now,
       updatedAt: now,

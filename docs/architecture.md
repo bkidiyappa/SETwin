@@ -3,7 +3,7 @@
 SETwin is a **modular monolith**. CLI, API, MCP, and Web UI share the same domain packages and PostgreSQL database. MCP never talks to the database directly.
 
 ```text
-CLI / API / MCP / Web  --->  packages/* (domain)  --->  PostgreSQL (+ pgvector-ready)
+CLI / API / MCP / Web  --->  packages/* (domain)  --->  PostgreSQL
 ```
 
 > **AI proposes. SETwin remembers. Roles review. Humans approve. Everything is traceable.**
@@ -14,8 +14,8 @@ CLI / API / MCP / Web  --->  packages/* (domain)  --->  PostgreSQL (+ pgvector-r
 
 ### 1. Bootstrap
 
-1. `docker compose up -d` starts Postgres.
-2. `pnpm setwin -- init` creates `data/` + `workspace/`, applies migrations, and seeds:
+1. Postgres is already running. `SETWIN_DATABASE_URL` points at it. `docker compose up -d` is only the sample server.
+2. `pnpm setwin -- init` creates `data/` + `workspace/`, applies migrations in that existing database, and seeds:
    - roles & permissions (`@setwin/auth`)
    - workflow policies (`submit` / `approve` / `reject` / `request_changes`)
    - approval policies per artifact type (who must approve)
@@ -148,11 +148,9 @@ templates/*       pipeline templates
 
 ## Reset to a clean slate
 
-To wipe all twin data and start from defining a product/repo again:
+To wipe all twin data and start from defining a product/repo again, empty the database named in `SETWIN_DATABASE_URL`, then initialize again. With the sample Compose server that is `docker compose down -v` and `docker compose up -d`. With your own Postgres, drop and recreate that database.
 
 ```bash
-docker compose down -v
-docker compose up -d
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 pnpm setwin -- login admin --password admin-pass

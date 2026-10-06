@@ -39,6 +39,11 @@ Implement approved design/stories by writing real source files into the product 
 **Title:** Implement design into repository files (reuse / modify / add)
 **When:** After Design is APPROVED and Code+Tests is requested
 
+- Reply with one JSON object only. Do not think out loud and do not wrap it in markdown.
+- The object must have title, summary, and files.
+- Each file has path (relative to the repo), content (the full file), and action add or modify.
+- Shape: {"title":"Login page","summary":"What changed","files":[{"path":"src/login/Login.tsx","content":"full file","action":"modify"}]}
+
 You will receive: Feature + Stories + Design context, a **tech stack** block, a **test directory layout** block, plus a snapshot of **existing repo files**.
 
 Output **only** a JSON object:

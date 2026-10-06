@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
+import { AuthenticationError, AuthorizationError } from "@setwin/auth";
 import {
   VERSION,
   getLogger,
@@ -8,7 +9,7 @@ import {
   setupLogging,
 } from "@setwin/config";
 import { buildStatus } from "@setwin/core";
-import { applyMigrations } from "@setwin/database";
+import { applyMigrations, checkDatabase } from "@setwin/database";
 import { registerIdentityRoutes } from "./identity.ts";
 import { registerTwinRoutes } from "./twin.ts";
 import { registerGherkinRoutes } from "./gherkin.ts";
@@ -39,8 +40,12 @@ function explainError(error: unknown): { statusCode: number; message: string } {
   if (!message) {
     message = "Internal error";
   }
-  if (statusCode >= 500 && /timed out|timeout|aborted/i.test(message)) {
-    statusCode = 504;
+  if (statusCode >= 500) {
+    if (/timed out|timeout|aborted/i.test(message)) {
+      statusCode = 504;
+    } else {
+      message = "Internal error";
+    }
   }
   return { statusCode, message };
 }
@@ -53,7 +58,15 @@ export function createApp() {
     const correlationId = (request.headers["x-correlation-id"] as string | undefined) ?? randomUUID();
     setCorrelationId(correlationId);
     reply.header("x-correlation-id", correlationId);
-    reply.header("access-control-allow-origin", "*");
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("referrer-policy", "no-referrer");
+    const origin = request.headers.origin;
+    const allowed = getSettings().webOrigins;
+    if (typeof origin === "string" && allowed.includes(origin)) {
+      reply.header("access-control-allow-origin", origin);
+      reply.header("access-control-allow-credentials", "true");
+      reply.header("vary", "Origin");
+    }
     reply.header("access-control-allow-headers", "authorization, content-type, x-correlation-id");
     reply.header("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   });
@@ -68,15 +81,15 @@ export function createApp() {
     return reply.code(explained.statusCode).send({ error: explained.message });
   });
 
-  app.get("/health", async () => ({
-    status: "ok",
-    name: "SETwin",
-    version: VERSION,
-  }));
-
-  app.get("/status", async () => {
-    getLogger().debug("status requested");
-    return buildStatus();
+  app.get("/health", async (_request, reply) => {
+    const database = await checkDatabase(getSettings().databaseUrl);
+    const status = database.reachable ? "ok" : "down";
+    return reply.code(database.reachable ? 200 : 503).send({
+      status,
+      name: "SETwin",
+      version: VERSION,
+      databaseReachable: database.reachable,
+    });
   });
 
   registerIdentityRoutes(app);
@@ -88,6 +101,18 @@ export function createApp() {
   registerTestPlanRoutes(app);
   registerAttachmentRoutes(app);
   registerLlmRouteRoutes(app);
+
+  app.get("/status", async (request) => {
+    const actor = request.actor;
+    if (!actor) {
+      throw new AuthenticationError();
+    }
+    if (!actor.roles.includes("administrator")) {
+      throw new AuthorizationError();
+    }
+    getLogger().debug("status requested");
+    return buildStatus();
+  });
 
   return app;
 }

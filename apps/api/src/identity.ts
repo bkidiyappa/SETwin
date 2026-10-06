@@ -1,6 +1,7 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
 import {
-  AuthenticationError,
+  SESSION_TTL_MS,
   addTeamMember,
   assignRole,
   authenticate,
@@ -10,9 +11,11 @@ import {
   listTeams,
   listUsers,
   login,
+  logout,
   type Principal,
 } from "@setwin/auth";
 import { getSettings } from "@setwin/config";
+import { requireActor } from "./guard.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -20,21 +23,70 @@ declare module "fastify" {
   }
 }
 
+const SESSION_COOKIE = "setwin_session";
+
+const loginBody = z.object({
+  username: z.string().trim().min(1),
+  password: z.string().min(1),
+});
+
+const createUserBody = z.object({
+  username: z.string().trim().min(1),
+  password: z.string().min(1),
+  displayName: z.string().optional(),
+  role: z.string().optional(),
+});
+
 function bearerToken(request: FastifyRequest): string | undefined {
   const header = request.headers.authorization;
   if (header?.startsWith("Bearer ")) {
-    return header.slice("Bearer ".length).trim();
-  }
-  const query = request.query as { token?: string };
-  if (typeof query?.token === "string" && query.token.trim()) {
-    return query.token.trim();
+    const token = header.slice("Bearer ".length).trim();
+    return token || undefined;
   }
   return undefined;
 }
 
+function readSessionCookie(request: FastifyRequest): string | undefined {
+  const header = request.headers.cookie;
+  if (!header) {
+    return undefined;
+  }
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === SESSION_COOKIE) {
+      const value = rest.join("=").trim();
+      return value ? decodeURIComponent(value) : undefined;
+    }
+  }
+  return undefined;
+}
+
+function sessionToken(request: FastifyRequest): string | undefined {
+  return readSessionCookie(request) || bearerToken(request);
+}
+
+function cookieSuffix(): string {
+  return getSettings().cookieSecure ? "; Secure" : "";
+}
+
+function writeSessionCookie(reply: FastifyReply, token: string): void {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  reply.header(
+    "set-cookie",
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${cookieSuffix()}`,
+  );
+}
+
+function clearSessionCookie(reply: FastifyReply): void {
+  reply.header(
+    "set-cookie",
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${cookieSuffix()}`,
+  );
+}
+
 export function registerIdentityRoutes(app: FastifyInstance): void {
   app.addHook("preHandler", async (request) => {
-    const token = bearerToken(request);
+    const token = sessionToken(request);
     if (!token) {
       return;
     }
@@ -51,45 +103,38 @@ export function registerIdentityRoutes(app: FastifyInstance): void {
   });
 
   app.post("/auth/login", async (request, reply) => {
-    const body = request.body as { username?: string; password?: string };
-    if (!body?.username || !body.password) {
+    const parsed = loginBody.safeParse(request.body);
+    if (!parsed.success) {
       return reply.code(400).send({ error: "username and password are required" });
     }
-    const result = await login(getSettings().databaseUrl, body.username, body.password);
+    const result = await login(getSettings().databaseUrl, parsed.data.username, parsed.data.password, {
+      ip: request.ip,
+    });
+    writeSessionCookie(reply, result.token);
     return { token: result.token, user: result.user };
   });
 
-  app.get("/auth/me", async (request) => {
-    if (!request.actor) {
-      throw new AuthenticationError();
+  app.post("/auth/logout", async (request, reply) => {
+    const token = sessionToken(request);
+    if (token) {
+      await logout(getSettings().databaseUrl, token);
     }
-    return request.actor;
+    clearSessionCookie(reply);
+    return { ok: true };
   });
+
+  app.get("/auth/me", async (request) => requireActor(request));
 
   app.get("/users", async (request) => {
     return listUsers(getSettings().databaseUrl, request.actor);
   });
 
   app.post("/users", async (request, reply) => {
-    const body = request.body as {
-      username?: string;
-      password?: string;
-      displayName?: string;
-      role?: string;
-    };
-    if (!body?.username || !body.password) {
+    const parsed = createUserBody.safeParse(request.body);
+    if (!parsed.success) {
       return reply.code(400).send({ error: "username and password are required" });
     }
-    return createUser(
-      getSettings().databaseUrl,
-      {
-        username: body.username,
-        password: body.password,
-        displayName: body.displayName,
-        role: body.role,
-      },
-      request.actor,
-    );
+    return createUser(getSettings().databaseUrl, parsed.data, request.actor);
   });
 
   app.post("/users/:username/roles", async (request, reply) => {
@@ -101,7 +146,10 @@ export function registerIdentityRoutes(app: FastifyInstance): void {
     return assignRole(getSettings().databaseUrl, params.username, body.role, request.actor);
   });
 
-  app.get("/roles", async () => listRoles(getSettings().databaseUrl));
+  app.get("/roles", async (request) => {
+    requireActor(request);
+    return listRoles(getSettings().databaseUrl);
+  });
 
   app.get("/teams", async (request) => listTeams(getSettings().databaseUrl, request.actor));
 

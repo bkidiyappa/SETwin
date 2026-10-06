@@ -619,6 +619,18 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
         created_at timestamptz NOT NULL
       )
     `;
+    await client.sql`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version text PRIMARY KEY,
+        applied_at timestamptz NOT NULL
+      )
+    `;
+    await client.sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_params text NOT NULL DEFAULT '16384,8,1'`;
+    await client.sql`
+      INSERT INTO schema_migrations (version, applied_at)
+      VALUES ('002_password_params', now())
+      ON CONFLICT (version) DO NOTHING
+    `;
     await client.sql`CREATE INDEX IF NOT EXISTS artifacts_project_id_idx ON artifacts (project_id)`;
     await client.sql`CREATE INDEX IF NOT EXISTS code_symbols_repo_file_idx ON code_symbols (repository_id, file_path)`;
     await client.sql`CREATE INDEX IF NOT EXISTS artifact_relationships_to_idx ON artifact_relationships (to_artifact_id)`;

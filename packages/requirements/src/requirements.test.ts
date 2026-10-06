@@ -74,12 +74,52 @@ describe("requirement intelligence", () => {
     );
     expect(drafts).toHaveLength(2);
     expect(drafts[0].title).toBe("Login Page Creation");
+    expect(drafts[0].content).toContain("Description");
+    expect(drafts[0].content).toContain("Acceptance Criteria");
+    expect(drafts[0].content).toContain("Additional Details");
     expect(drafts[0].content).toContain("Scenario: User submits invalid credentials");
     expect(drafts[0].content).toContain("Then An error message is displayed indicating invalid credentials");
     expect(drafts[0].content).not.toContain('action for "{"');
     expect(drafts[0].content).toContain("Role selection is unspecified.");
     expect(drafts[1].title).toBe("Dashboard Redirect on Login");
     expect(drafts[1].content).toContain("Feature: Dashboard Redirect");
+    expect(drafts[1].content).not.toContain("Role selection is unspecified.");
+  });
+
+  it("formats a STORY_DRAFT reply into the four story parts", () => {
+    const drafts = parseStoryDrafts(
+      JSON.stringify({
+        STORY_DRAFT: [
+          {
+            title: "Login Page",
+            description: "Create a login page and open the dashboard after a successful sign-in.",
+            acceptance_criteria: [
+              "Feature: Login\n  Scenario: Valid sign-in\n    Given the user is on the login page\n    When they submit valid credentials\n    Then the dashboard is shown",
+            ],
+            additional_details: "Session length is not specified.",
+          },
+        ],
+        ambiguity_conflict_notes: {
+          ambiguity: ["What data the dashboard shows is unspecified."],
+        },
+      }),
+      "login",
+    );
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].title).toBe("Login Page");
+    expect(drafts[0].content).toBe(
+      [
+        "Description",
+        "Create a login page and open the dashboard after a successful sign-in.",
+        "",
+        "Acceptance Criteria",
+        "Feature: Login\n  Scenario: Valid sign-in\n    Given the user is on the login page\n    When they submit valid credentials\n    Then the dashboard is shown",
+        "",
+        "Additional Details",
+        "Session length is not specified.",
+        "- ambiguity: What data the dashboard shows is unspecified.",
+      ].join("\n"),
+    );
   });
 
   it("does not invent a generic acceptance scenario", () => {
@@ -96,7 +136,9 @@ describe("requirement intelligence", () => {
       }),
       "login",
     );
+    expect(drafts[0].content).toContain("Description\nShow a login form.");
     expect(drafts[0].content).toContain("Then they see a form.");
+    expect(drafts[0].content).toContain("Additional Details\nNone.");
     expect(drafts[0].content).not.toContain("Scenario: Acceptance");
     expect(drafts[0].content).not.toContain("the precondition is met");
   });

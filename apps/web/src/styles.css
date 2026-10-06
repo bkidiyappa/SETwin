@@ -588,6 +588,17 @@ body.is-resizing .workspace-row-resize {
   min-height: 0;
   overflow: auto;
 }
+.skill-edit-modal {
+  width: min(880px, 96vw);
+  height: min(86vh, 760px);
+}
+.skill-edit-modal textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  font-family: ui-monospace, monospace;
+}
 .workspace-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

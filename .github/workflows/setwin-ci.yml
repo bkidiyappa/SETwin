@@ -30,6 +30,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install
+      - run: pnpm --filter @setwin/web build
       - run: pnpm test
         env:
           SETWIN_DATABASE_URL: postgresql://setwin:setwin@127.0.0.1:5432/setwin

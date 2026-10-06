@@ -130,22 +130,39 @@ export async function initialize(settings: Settings = getSettings()): Promise<In
   };
 }
 
-export function explainUnreachableDatabase(databaseUrl: string, detail: string): string {
+export function explainUnreachableDatabase(
+  databaseUrl: string,
+  detail: string,
+  configuredUrl?: string,
+): string {
   const databaseName = databaseNameFromUrl(databaseUrl);
+  const scheme = configuredUrl?.split("://")[0];
+  const schemeNote =
+    scheme && scheme !== "postgresql" && scheme !== "postgres"
+      ? [
+          `The value in .env starts with ${scheme}://.`,
+          "psql does not accept that prefix. A successful psql command that used postgresql:// tested a different string.",
+          `Change SETWIN_DATABASE_URL to ${redactDatabaseUrl(databaseUrl)} and pass that exact postgresql:// string to psql.`,
+          "",
+        ]
+      : [];
   return [
     "SETwin init stopped. PostgreSQL is not ready, so no tables were created.",
     "",
     `SETWIN_DATABASE_URL: ${redactDatabaseUrl(databaseUrl)}`,
+    ...schemeNote,
     `Check result: ${detail}`,
     `What that means: ${describeDatabaseFailure(detail)}`,
     "",
-    `init creates tables inside the database named "${databaseName}". Create that database before init. init leaves PostgreSQL installation, startup, and CREATE DATABASE to you.`,
+    `init creates tables inside the database named "${databaseName}". Create that database before init.`,
     "",
-    "Docker is optional. When .env points SETWIN_DATABASE_URL at a PostgreSQL you already run, start that server and skip docker compose.",
-    "The sample server in this repository is for a machine that has no PostgreSQL yet:",
-    "  docker compose up -d",
-    "  docker compose ps",
-    "Wait until the postgres service is healthy. docker compose up -d returns before PostgreSQL accepts connections, and init fails the same way if you run it during that wait.",
+    "PostgreSQL installed on Linux (no Docker): the packages create a superuser named postgres and a database named postgres. They do not create user setwin or database setwin. The default URL expects both. Do not run docker compose.",
+    "  sudo systemctl start postgresql",
+    "  sudo -u postgres psql -c \"CREATE USER setwin WITH PASSWORD 'setwin';\"",
+    "  sudo -u postgres psql -c \"CREATE DATABASE setwin OWNER setwin;\"",
+    "  psql \"postgresql://setwin:setwin@127.0.0.1:5432/setwin\" -c \"SELECT 1\"",
+    "SE Twin connects to 127.0.0.1 over TCP. In pg_hba.conf the 127.0.0.1/32 line must allow a password (scram-sha-256 or md5). Reload PostgreSQL after editing that file.",
+    "docker compose is only for a machine where PostgreSQL is not installed. On a machine that already runs it, Compose fights for port 5432.",
     "",
     "Create .env before init. On Linux and macOS:",
     "  cp .env.example .env",
@@ -156,6 +173,62 @@ export function explainUnreachableDatabase(databaseUrl: string, detail: string):
     'pnpm then prints "Command failed with exit code 1". That line only means init exited with status 1. The reason is the check result above.',
     "Run `pnpm setwin -- status` to repeat this check.",
   ].join("\n");
+}
+
+export function explainInitFailure(databaseUrl: string, error: unknown): string {
+  const detail = redactDatabaseError(databaseUrl, error);
+  const databaseName = databaseNameFromUrl(databaseUrl);
+  const username = databaseUserFromUrl(databaseUrl);
+  const lines = [
+    "SETwin init failed while creating tables.",
+    "",
+    `SETWIN_DATABASE_URL: ${redactDatabaseUrl(databaseUrl)}`,
+    `PostgreSQL said: ${detail}`,
+    "",
+    "A successful SELECT 1 only shows that this user can log in.",
+  ];
+  if (isSchemaCreateDenied(detail)) {
+    lines.push(
+      "This user cannot create tables in schema public. On PostgreSQL 15 and newer, that requires ownership of the database.",
+      "Run these as the postgres superuser, then run init again:",
+      `  sudo -u postgres psql -c "ALTER DATABASE ${databaseName} OWNER TO ${username};"`,
+      `  sudo -u postgres psql -d ${databaseName} -c "GRANT ALL ON SCHEMA public TO ${username};"`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function redactDatabaseError(databaseUrl: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const redacted = redactDatabaseUrl(databaseUrl);
+  let sanitized = message.replaceAll(databaseUrl, redacted);
+  try {
+    const password = new URL(databaseUrl).password;
+    if (password) {
+      sanitized = sanitized.replaceAll(decodeURIComponent(password), "***");
+      sanitized = sanitized.replaceAll(password, "***");
+    }
+  } catch {
+    // The URL could not be parsed. The replacement above still applies.
+  }
+  return sanitized || "(no message)";
+}
+
+function isSchemaCreateDenied(detail: string): boolean {
+  const text = detail.toLowerCase();
+  return text.includes("permission denied for schema") || text.includes("must be owner of");
+}
+
+function databaseUserFromUrl(databaseUrl: string): string {
+  try {
+    const username = decodeURIComponent(new URL(databaseUrl).username);
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(username)) {
+      return username;
+    }
+  } catch {
+    // Fall through to a placeholder the operator can replace.
+  }
+  return "<user-in-SETWIN_DATABASE_URL>";
 }
 
 function databaseNameFromUrl(databaseUrl: string): string {
@@ -170,13 +243,16 @@ function databaseNameFromUrl(databaseUrl: string): string {
 function describeDatabaseFailure(detail: string): string {
   const text = detail.toLowerCase();
   if (text.includes("not listening")) {
-    return "Nothing accepted a connection on that host and port. PostgreSQL is stopped, the URL host or port is wrong, or the sample container is not publishing port 5432 yet.";
+    return "Nothing accepted a connection on that host and port. On Linux start the service you installed: sudo systemctl start postgresql. Then confirm the port with ss -ltn. Put that host and port in SETWIN_DATABASE_URL.";
+  }
+  if (text.includes("role") && text.includes("does not exist")) {
+    return "PostgreSQL answered, and the user in SETWIN_DATABASE_URL was never created. A Linux package install has the postgres superuser only. Create the user with sudo -u postgres psql, then run init again.";
   }
   if (text.includes("does not exist")) {
-    return "PostgreSQL answered, and the database named in the URL is missing. Create it, then run init again. The Compose sample creates a database named setwin.";
+    return "PostgreSQL answered, and the database named in the URL is missing. Create it with sudo -u postgres psql -c \"CREATE DATABASE setwin OWNER setwin;\", then run init again.";
   }
   if (text.includes("authentication") || text.includes("password")) {
-    return "PostgreSQL answered, and the user or password in SETWIN_DATABASE_URL was rejected.";
+    return "PostgreSQL answered, and the user or password was rejected. On a Linux install the user setwin does not exist until you create it. Password login also requires a pg_hba.conf host line for 127.0.0.1/32.";
   }
   return "PostgreSQL answered with an error. The check result is that message with the password removed.";
 }

@@ -2,7 +2,7 @@ import { access, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createSettings } from "@setwin/config";
-import { buildStatus, explainUnreachableDatabase, formatStatus, initialize } from "./index.ts";
+import { buildStatus, explainInitFailure, explainUnreachableDatabase, formatStatus, initialize } from "./index.ts";
 import { describe, expect, it } from "vitest";
 
 describe("status", () => {
@@ -40,10 +40,25 @@ describe("initialize", () => {
     expect(explanation).toContain("Command failed with exit code 1");
     expect(explanation).toContain("cp .env.example .env");
     expect(explanation).toContain('database named "setwin"');
+    expect(explanation).toContain("CREATE USER setwin");
     expect(explanation).not.toContain("super-secret");
     expect(explainUnreachableDatabase(settings.databaseUrl, 'database "setwin" does not exist')).toContain(
       "database named in the URL is missing",
     );
+    expect(
+      explainUnreachableDatabase(
+        settings.databaseUrl,
+        "not listening on 127.0.0.1:5432",
+        "postgresql+psycopg://setwin:super-secret@127.0.0.1:5432/setwin",
+      ),
+    ).toContain("postgresql+psycopg://");
+    const denied = explainInitFailure(
+      settings.databaseUrl,
+      new Error('permission denied for schema public'),
+    );
+    expect(denied).toContain("ALTER DATABASE setwin OWNER TO setwin");
+    expect(denied).toContain("GRANT ALL ON SCHEMA public TO setwin");
+    expect(denied).not.toContain("super-secret");
     await access(settings.dataDir);
     await access(settings.workspaceDir);
     await rm(root, { recursive: true, force: true });

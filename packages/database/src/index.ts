@@ -112,6 +112,7 @@ const MIGRATION_LOCK_ID = 8_747_201;
 
 export async function applyMigrations(databaseUrl: string): Promise<void> {
   const client = createDatabaseClient(databaseUrl);
+  let failure: unknown;
   try {
     await client.sql`SELECT pg_advisory_lock(${MIGRATION_LOCK_ID})`;
     await client.sql`
@@ -635,12 +636,22 @@ export async function applyMigrations(databaseUrl: string): Promise<void> {
     await client.sql`CREATE INDEX IF NOT EXISTS code_symbols_repo_file_idx ON code_symbols (repository_id, file_path)`;
     await client.sql`CREATE INDEX IF NOT EXISTS artifact_relationships_to_idx ON artifact_relationships (to_artifact_id)`;
     await client.sql`CREATE INDEX IF NOT EXISTS code_repositories_project_id_idx ON code_repositories (project_id)`;
+  } catch (error) {
+    failure = error;
   } finally {
     try {
       await client.sql`SELECT pg_advisory_unlock(${MIGRATION_LOCK_ID})`;
-    } finally {
-      await client.close();
+    } catch {
+      // A failed connect has nothing to unlock. Keep the original error.
     }
+    try {
+      await client.close();
+    } catch {
+      // Closing must not replace the migration error.
+    }
+  }
+  if (failure) {
+    throw failure;
   }
 }
 

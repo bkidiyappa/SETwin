@@ -23,41 +23,38 @@ See [PLAN.md](PLAN.md) for the full product and engineering plan.
 - Hash-chained audit events on mutations
 - AI gateway (Ollama-first; OpenAI/Anthropic/Bedrock/Azure/Gemini adapters)
 - GitHub Actions workflow plus GitLab/Jenkins/ADO templates
-- PostgreSQL. `docker compose up -d` starts a sample server. A Postgres you already run is enough when `SETWIN_DATABASE_URL` points at it.
+- PostgreSQL. Install it with the operating system, or start the sample server with Docker on a machine that has no PostgreSQL. The app does not require the pgvector extension.
 
 ## Requirements
 
 - Node.js 20+
 - [pnpm](https://pnpm.io/)
-- PostgreSQL that is already running and reachable. Docker is one way to start it (`docker compose up -d` in this repo). The app does not require the pgvector extension.
+- PostgreSQL already running on the machine
 
 ## Quick start
 
 Full walkthrough: **[Getting started](docs/getting-started.md)**. How pipeline, Explorer, and approvals fit together: **[Architecture](docs/architecture.md)**. A single-host install with backups and TLS: **[Production](docs/production.md)**.
 
+These commands are for PostgreSQL installed on Linux. Do not run `docker compose` when that service is already running.
+
 ```bash
 pnpm install
-```
-
-Create `.env` from the example. On Windows: `copy .env.example .env`. On macOS or Linux: `cp .env.example .env`.
-
-`SETWIN_DATABASE_URL` must name a database that already exists on a running Postgres. `init` creates the tables there. It does not install Postgres, start it, or create the database.
-
-On Linux, `copy .env.example .env` is not a command. Use `cp`. If `.env` was never created, `init` uses the default URL `127.0.0.1:5432/setwin`.
-
-To use the sample server instead of your own Postgres:
-
-```bash
-docker compose up -d
-docker compose ps
-```
-
-Wait until the postgres service is healthy. `docker compose up -d` returns before Postgres accepts connections.
-
-```bash
+cp .env.example .env
+sudo systemctl start postgresql
+sudo -u postgres psql -c "CREATE USER setwin WITH PASSWORD 'setwin';"
+sudo -u postgres psql -c "CREATE DATABASE setwin OWNER setwin;"
+psql "postgresql://setwin:setwin@127.0.0.1:5432/setwin" -c "SELECT 1"
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 ```
+
+`copy .env.example .env` is the Windows command. On Linux it fails, `.env` is missing, and init uses the default URL anyway.
+
+`SETWIN_DATABASE_URL` and the `psql` argument are the same string: `postgresql://setwin:setwin@127.0.0.1:5432/setwin`. A value that starts with `postgresql+psycopg://` is a different string. `psql` rejects `+psycopg`. Change `.env` to the `postgresql://` form before `init`.
+
+A Linux PostgreSQL package creates the `postgres` superuser and the `postgres` database. It does not create user `setwin` or database `setwin`. The URL in `.env.example` expects both, and `init` only creates tables inside that database. The `psql` line must succeed before `init`. SE Twin connects to `127.0.0.1` with a password, so `pg_hba.conf` needs a `host` line for `127.0.0.1/32` using `scram-sha-256` or `md5`.
+
+Docker is a different install, for a machine with no PostgreSQL. It is in [Getting started](docs/getting-started.md#no-postgresql-on-the-machine). Two servers cannot share port 5432.
 
 If init fails, pnpm prints only this:
 
@@ -69,11 +66,20 @@ That line is pnpm reporting the exit status. The SETwin lines above it name `SET
 
 Then, in two terminals: `pnpm dev` and `pnpm web`. Open [http://127.0.0.1:5173](http://127.0.0.1:5173), sign in, and follow **Setup** in [Getting started](docs/getting-started.md).
 
-**Start over** deletes products and users, not your git checkouts. With the sample server: `docker compose down -v`, then `up -d`, `init`, and `user create` again. With your own Postgres: drop and recreate that database, then `init` and `user create` again. Sign out and log in.
+**Start over** on Linux deletes products and users, not your git checkouts:
+
+```bash
+sudo -u postgres psql -c "DROP DATABASE setwin;"
+sudo -u postgres psql -c "CREATE DATABASE setwin OWNER setwin;"
+pnpm setwin -- init
+pnpm setwin -- user create admin --password admin-pass
+```
+
+Sign out and log in.
 
 ## Configuration
 
-Settings are loaded from environment variables prefixed with `SETWIN_`. Copy `.env.example` to `.env`. `SETWIN_DATABASE_URL` is the Postgres SE Twin uses. Status output redacts database passwords. SQLAlchemy-style URLs (`postgresql+psycopg://`) are accepted and normalized.
+Settings are loaded from environment variables prefixed with `SETWIN_`. Copy `.env.example` to `.env`. `SETWIN_DATABASE_URL` is the Postgres URL, and it must start with `postgresql://` so `psql` and `init` use the same string. Status output redacts database passwords. An older `postgresql+psycopg://` value is still rewritten to `postgresql://` before connecting. Change it in `.env` so the file matches the `psql` check.
 
 ## Documentation
 

@@ -14,7 +14,7 @@ CLI / API / MCP / Web  --->  packages/* (domain)  --->  PostgreSQL
 
 ### 1. Bootstrap
 
-1. Postgres is already running. `SETWIN_DATABASE_URL` points at it. `docker compose up -d` is only the sample server.
+1. PostgreSQL is already running on the machine. On Linux, create user `setwin` and database `setwin`, and point `SETWIN_DATABASE_URL` at them. `docker compose up -d` is only for a machine with no PostgreSQL installed.
 2. `pnpm setwin -- init` creates `data/` + `workspace/`, applies migrations in that existing database, and seeds:
    - roles & permissions (`@setwin/auth`)
    - workflow policies (`submit` / `approve` / `reject` / `request_changes`)

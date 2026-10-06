@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { Command, CommanderError } from "commander";
@@ -10,6 +11,7 @@ import {
 } from "@setwin/config";
 import {
   buildStatus,
+  explainInitFailure,
   explainUnreachableDatabase,
   formatInitResult,
   formatStatus,
@@ -94,6 +96,13 @@ export type CliIo = {
   error: (message: string) => void;
 };
 
+function reportError(io: CliIo, message: string): void {
+  writeSync(2, message.endsWith("\n") ? message : `${message}\n`);
+  if (io.error !== console.error) {
+    io.error(message);
+  }
+}
+
 export function createProgram(io: CliIo = { log: console.log, error: console.error }): Command {
   const program = new Command();
   program
@@ -131,11 +140,24 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
     .command("init")
     .description("Create local workspace directories and apply database migrations.")
     .action(async () => {
-      const result = await initialize();
+      let result;
+      try {
+        result = await initialize();
+      } catch (error) {
+        reportError(io, explainInitFailure(getSettings().databaseUrl, error));
+        throw new CommanderError(1, "initFailed", "init failed");
+      }
       getLogger().debug({ initialized: !result.alreadyInitialized }, "init completed");
       io.log(formatInitResult(result));
       if (!result.databaseReachable) {
-        io.error(explainUnreachableDatabase(getSettings().databaseUrl, result.databaseDetail));
+        reportError(
+          io,
+          explainUnreachableDatabase(
+            getSettings().databaseUrl,
+            result.databaseDetail,
+            process.env.SETWIN_DATABASE_URL,
+          ),
+        );
         throw new CommanderError(1, "databaseUnreachable", result.message);
       }
     });
@@ -1316,6 +1338,7 @@ export async function runCli(argv: string[], io?: CliIo): Promise<number> {
       }
       return error.exitCode;
     }
+    const output = io ?? { log: console.log, error: console.error };
     if (
       error instanceof AuthenticationError ||
       error instanceof AuthorizationError ||
@@ -1323,9 +1346,11 @@ export async function runCli(argv: string[], io?: CliIo): Promise<number> {
       error instanceof NotFoundError ||
       error instanceof ValidationError
     ) {
-      (io ?? { log: console.log, error: console.error }).error(error.message);
-      return error.statusCode === 401 || error.statusCode === 403 ? 1 : 1;
+      reportError(output, error.message);
+      return 1;
     }
-    throw error;
+    const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    reportError(output, detail);
+    return 1;
   }
 }

@@ -8,36 +8,55 @@ SE Twin remembers a product: its stories, design, code, tests, reviews, and test
 
 ## 1. Install once
 
-You need Node.js 20 or newer, [pnpm](https://pnpm.io/), and a PostgreSQL server that is already running. Docker is optional. `docker compose up -d` in this folder starts a sample server. If you already have Postgres, point `SETWIN_DATABASE_URL` at it and skip Compose. The app does not require the pgvector extension.
+You need Node.js 20 or newer, [pnpm](https://pnpm.io/), and PostgreSQL already running on this Linux machine. The app does not require the pgvector extension. Do not run `docker compose` for this setup. Compose is a second PostgreSQL, and it is only for a machine where PostgreSQL is not installed.
+
+### Install SE Twin
 
 From the project folder:
 
 ```bash
 pnpm install
-```
-
-Create `.env`. On Windows:
-
-```bash
-copy .env.example .env
-```
-
-On macOS or Linux:
-
-```bash
 cp .env.example .env
 ```
 
-Open `.env` and set `SETWIN_DATABASE_URL` to your server. The database named in that URL must already exist. `init` creates tables and roles in it. `init` exits with code 1 when the server cannot be reached.
+`copy .env.example .env` is the Windows command. On Linux that command fails, so `.env` is never created and later steps use the default URL `127.0.0.1:5432/setwin`.
 
-To use the sample server instead:
+### Create the setwin login on your PostgreSQL
+
+The Linux packages create a superuser named `postgres` and a database named `postgres`. They do not create a user named `setwin` or a database named `setwin`. `.env.example` points at both. `init` creates tables inside database `setwin`. It does not create that database or that user.
 
 ```bash
-docker compose up -d
-docker compose ps
+sudo systemctl enable --now postgresql
+sudo systemctl status postgresql
+sudo -u postgres psql -c "CREATE USER setwin WITH PASSWORD 'setwin';"
+sudo -u postgres psql -c "CREATE DATABASE setwin OWNER setwin;"
 ```
 
-Wait until Postgres is healthy, then:
+If CREATE says the user or database already exists, continue. Use your own names if you prefer. Put the same names in `SETWIN_DATABASE_URL`.
+
+SE Twin connects to `127.0.0.1` with a password. That is a TCP connection. Peer authentication on the local socket does not apply to it. In `pg_hba.conf`, the line for `127.0.0.1/32` must use `scram-sha-256` or `md5`. After you edit that file:
+
+```bash
+sudo systemctl reload postgresql
+```
+
+Put this line in `.env`. It is the connection `init` opens:
+
+```bash
+SETWIN_DATABASE_URL=postgresql://setwin:setwin@127.0.0.1:5432/setwin
+```
+
+Prove that same string with psql before init. The argument must be the value of `SETWIN_DATABASE_URL`, character for character:
+
+```bash
+psql "postgresql://setwin:setwin@127.0.0.1:5432/setwin" -c "SELECT current_user, current_database();"
+```
+
+The result must show `setwin` and `setwin`. When this `psql` command fails, `pnpm setwin -- init` fails for the same reason.
+
+`postgresql+psycopg://` is a different string. `psql` rejects the `+psycopg` suffix, so a check written with `postgresql://` does not prove the value stored in `.env`. Change `.env` to the `postgresql://` string above.
+
+### Initialize
 
 ```bash
 pnpm setwin -- init
@@ -46,40 +65,70 @@ pnpm setwin -- user create admin --password admin-pass
 
 The first user is an administrator. Use a password you will remember; `admin-pass` is only an example.
 
+If `user create` says authentication is required, an administrator already exists. Sign in with that account. Do not create a second one unless you mean to.
+
 ### If init prints Command failed with exit code 1
 
 pnpm wraps every failed script the same way. A failed `init` looks like this, and the last line does not say why:
 
 ```text
-> setwin@0.1.0 setwin C:\work\SETwin
+> setwin@0.1.0 setwin /home/you/SETwin
 > tsx apps/cli/src/index.ts init
 
 ELIFECYCLE  Command failed with exit code 1.
 ```
 
-Read the SETwin text above that line. It prints the URL from `.env` with the password hidden, then a check result. These are the three results and what to do for each.
+Read the SETwin text above that line. It prints the URL from `.env` with the password hidden, then a check result.
 
 **Check result: not listening on 127.0.0.1:5432**
 
-Nothing accepted a connection. Common causes:
+The PostgreSQL service is stopped, or it is listening on a different port.
 
-- `.env` was never created, so init used the default URL. On Linux and macOS the Windows command `copy .env.example .env` fails. Run `cp .env.example .env`, set `SETWIN_DATABASE_URL`, and run init again.
-- You already run PostgreSQL somewhere else. Put that host, port, user, password, and database in `SETWIN_DATABASE_URL`. Leave `docker compose` stopped. Docker is optional when this URL reaches your server.
-- You wanted the sample server, and `docker compose up -d` had only just returned. That command exits while Postgres is still starting. Run `docker compose ps` and wait until `postgres` is healthy, then run init again. The sample listens on port 5432 with user `setwin`, password `setwin`, and database `setwin`.
+```bash
+sudo systemctl start postgresql
+ss -ltn | grep 5432
+```
 
-**Check result mentions "does not exist"**
+`ss` must show `127.0.0.1:5432` or `0.0.0.0:5432`. If the port is different, put that port in `SETWIN_DATABASE_URL`. Do not start Docker to fix this. Docker is not the PostgreSQL you installed.
 
-Postgres is up. The database name in the URL is missing. `init` creates tables inside that database. Create the database on your server first (`CREATE DATABASE setwin;` when the URL ends in `/setwin`), then run init again. The Compose sample creates `setwin` for you when its volume is new.
+**Check result mentions role "setwin" or password authentication**
 
-**Check result mentions password or authentication**
+The server is up. User `setwin` was never created, or `pg_hba.conf` is still peer-only. Run the `CREATE USER` command in [Create the setwin login](#create-the-setwin-login-on-your-postgresql), confirm the `127.0.0.1/32` password line, reload PostgreSQL, and retry the `psql` proof command.
 
-Postgres is up and the user or password in `SETWIN_DATABASE_URL` does not match that server. The sample server uses `setwin` / `setwin`.
+**Check result mentions database "setwin" does not exist**
+
+The server is up and the user can log in. Database `setwin` is missing. `init` will not create it. Run:
+
+```bash
+sudo -u postgres psql -c "CREATE DATABASE setwin OWNER setwin;"
+```
+
+**`psql` SELECT 1 works, and init still exits 1**
+
+Logging in is not enough to create tables. On PostgreSQL 15 and newer, only the database owner can create objects in schema `public`. If database `setwin` already existed and is owned by `postgres`, user `setwin` can run `SELECT 1` and `init` still fails on the first `CREATE TABLE`.
+
+```bash
+sudo -u postgres psql -c "ALTER DATABASE setwin OWNER TO setwin;"
+sudo -u postgres psql -d setwin -c "GRANT ALL ON SCHEMA public TO setwin;"
+pnpm setwin -- init
+```
+
+The text above the pnpm line then starts with `SETwin init failed while creating tables` and includes the PostgreSQL message.
 
 `pnpm setwin -- status` prints the same database check and does not create tables.
 
-If `user create` says authentication is required, an administrator already exists. Sign in with that account. Do not create a second one unless you mean to.
+### No PostgreSQL on the machine
 
-To run the API, web app, and Postgres together on one host, see [Production](production.md).
+Use this only when `systemctl status postgresql` reports that the service is not installed. Skip it when PostgreSQL is already running on the host. The sample server and a host PostgreSQL both want port 5432.
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+Wait until `postgres` is healthy. `docker compose up -d` returns before PostgreSQL accepts connections. The sample creates user `setwin`, password `setwin`, and database `setwin`. Then run `pnpm setwin -- init`.
+
+To run the API, web app, and Postgres together in Docker on one host, see [Production](production.md). That path is separate from PostgreSQL installed on Linux.
 
 ---
 
@@ -280,18 +329,18 @@ Turn on **Include released** to see released plans in the lower list. Master pla
 
 ## 10. Start over
 
-To erase every product, story, test plan, and repo registration, and also the users, empty the database and run `init` again.
-
-Sample server from Compose:
+To erase every product, story, test plan, and repo registration, and also the users, drop and recreate the database, then run `init` again. On Linux:
 
 ```bash
-docker compose down -v
-docker compose up -d
+sudo -u postgres psql -c "DROP DATABASE setwin;"
+sudo -u postgres psql -c "CREATE DATABASE setwin OWNER setwin;"
 pnpm setwin -- init
 pnpm setwin -- user create admin --password admin-pass
 ```
 
-Your own Postgres: drop and recreate the database named in `SETWIN_DATABASE_URL`, then `pnpm setwin -- init` and `user create` again.
+`DROP DATABASE` fails while SE Twin is connected. Stop `pnpm dev` first.
+
+The Docker sample, only when you used Compose instead of the host PostgreSQL: `docker compose down -v`, then `docker compose up -d`, then `init` and `user create` again.
 
 Then sign out in the browser and log in again. This does not delete the git folders you registered. Those stay on disk.
 

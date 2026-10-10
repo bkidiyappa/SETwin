@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
 import pino, { type Logger } from "pino";
@@ -53,6 +53,45 @@ export function loadEnvFile(): void {
   if (existsSync(envPath)) {
     loadDotenv({ path: envPath, override: false });
   }
+}
+
+export function readEnvFileValue(key: string): string | undefined {
+  const envPath = path.join(findProjectRoot(), ".env");
+  if (!existsSync(envPath)) {
+    return undefined;
+  }
+  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const eq = trimmed.indexOf("=");
+    if (eq === -1 || trimmed.slice(0, eq).trim() !== key) {
+      continue;
+    }
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    return value;
+  }
+  return undefined;
+}
+
+export function explainDatabaseUrlOverride(effectiveUrl: string, fileUrl: string | undefined): string | undefined {
+  if (!fileUrl || normalizeDatabaseUrl(fileUrl) === effectiveUrl) {
+    return undefined;
+  }
+  return [
+    "The shell variable SETWIN_DATABASE_URL overrides .env, so editing .env did not change what init opens.",
+    `Shell: ${redactDatabaseUrl(effectiveUrl)}`,
+    `.env:  ${redactDatabaseUrl(fileUrl)}`,
+    "Run: unset SETWIN_DATABASE_URL",
+    "Then run init again. psql used the URL you typed. init uses the shell value when it is already set.",
+  ].join("\n");
 }
 
 export function normalizeDatabaseUrl(url: string): string {

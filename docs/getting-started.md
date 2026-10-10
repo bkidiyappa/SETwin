@@ -115,6 +115,15 @@ pnpm setwin -- init
 
 The text above the pnpm line then starts with `SETwin init failed while creating tables` and includes the PostgreSQL message.
 
+If that text is missing and the only line is `Command failed with exit code 1`, the shell is overriding `.env`. `psql` used the URL you typed. `init` uses `SETWIN_DATABASE_URL` from the shell when that variable is already set, and ignores the file you edited.
+
+```bash
+unset SETWIN_DATABASE_URL
+pnpm exec tsx apps/cli/src/index.ts init
+```
+
+`pnpm exec tsx` prints the PostgreSQL error itself. The same text is written to `logs/init-failure.log`.
+
 `pnpm setwin -- status` prints the same database check and does not create tables.
 
 ### No PostgreSQL on the machine

@@ -200,8 +200,22 @@ export function explainInitFailure(databaseUrl: string, error: unknown): string 
 
 function redactDatabaseError(databaseUrl: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  const extra = error as { code?: string; detail?: string; hint?: string; routine?: string };
+  const parts = [message];
+  if (extra.code && !message.includes(String(extra.code))) {
+    parts.push(`code: ${extra.code}`);
+  }
+  if (extra.detail) {
+    parts.push(`detail: ${extra.detail}`);
+  }
+  if (extra.hint) {
+    parts.push(`hint: ${extra.hint}`);
+  }
+  if (extra.routine) {
+    parts.push(`routine: ${extra.routine}`);
+  }
   const redacted = redactDatabaseUrl(databaseUrl);
-  let sanitized = message.replaceAll(databaseUrl, redacted);
+  let sanitized = parts.filter(Boolean).join("\n").replaceAll(databaseUrl, redacted);
   try {
     const password = new URL(databaseUrl).password;
     if (password) {

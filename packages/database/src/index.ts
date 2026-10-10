@@ -49,8 +49,8 @@ import {
   workflowTransitions,
 } from "./schema.ts";
 
-const TCP_PROBE_MS = 400;
-const CONNECT_TIMEOUT_SECONDS = 2;
+const TCP_PROBE_MS = 1000;
+const CONNECT_TIMEOUT_SECONDS = 10;
 
 export type DatabaseHealth = {
   reachable: boolean;
@@ -64,8 +64,10 @@ export type DatabaseClient = {
 };
 
 export function createDatabaseClient(databaseUrl: string, max = 1): DatabaseClient {
-  const sql = postgres(databaseUrl, {
+  const sql = postgres({
+    ...libpqConnection(databaseUrl),
     max,
+    ssl: false,
     connect_timeout: CONNECT_TIMEOUT_SECONDS,
     idle_timeout: 20,
     onnotice: () => undefined,
@@ -93,19 +95,41 @@ export function getDatabasePool(databaseUrl: string): DatabaseClient {
 }
 
 export async function checkDatabase(databaseUrl: string): Promise<DatabaseHealth> {
-  const target = databaseHostPort(databaseUrl);
-  if (target && !(await tcpReachable(target.host, target.port))) {
-    return { reachable: false, detail: `not listening on ${target.host}:${target.port}` };
-  }
   const client = createDatabaseClient(databaseUrl);
   try {
     await client.sql`SELECT 1`;
     return { reachable: true, detail: "reachable" };
   } catch (error) {
-    return { reachable: false, detail: safeError(error, databaseUrl) };
+    const target = databaseHostPort(databaseUrl);
+    const detail = safeError(error, databaseUrl);
+    if (target && !(await tcpReachable(target.host, target.port))) {
+      return { reachable: false, detail: `not listening on ${target.host}:${target.port} (${detail})` };
+    }
+    return { reachable: false, detail };
   } finally {
     await client.close();
   }
+}
+
+function libpqConnection(databaseUrl: string): {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+} {
+  const parsed = new URL(databaseUrl);
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  if (!parsed.hostname || !database) {
+    throw new Error(`SETWIN_DATABASE_URL must include a host and a database name: ${redactDatabaseUrl(databaseUrl)}`);
+  }
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : 5432,
+    database,
+    user: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+  };
 }
 
 const MIGRATION_LOCK_ID = 8_747_201;

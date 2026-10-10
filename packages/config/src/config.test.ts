@@ -1,4 +1,4 @@
-import { createSettings, redactDatabaseUrl } from "@setwin/config";
+import { createSettings, explainDatabaseUrlOverride, redactDatabaseUrl } from "@setwin/config";
 import { describe, expect, it } from "vitest";
 
 describe("redactDatabaseUrl", () => {
@@ -23,6 +23,22 @@ describe("createSettings", () => {
     expect(settings.databaseUrl).toBe("postgresql://setwin:super-secret@127.0.0.1:5432/setwin");
     expect(settings.databaseUrlRedacted).toBe("postgresql://setwin:***@127.0.0.1:5432/setwin");
     expect(settings.databaseUrlRedacted).not.toContain("super-secret");
+  });
+
+  it("explains when the shell URL overrides .env", () => {
+    const note = explainDatabaseUrlOverride(
+      "postgresql://setwin:super-secret@10.0.0.8:5432/other",
+      "postgresql://setwin:setwin@127.0.0.1:5432/setwin",
+    );
+    expect(note).toContain("unset SETWIN_DATABASE_URL");
+    expect(note).toContain("127.0.0.1:5432/setwin");
+    expect(note).not.toContain("super-secret");
+    expect(
+      explainDatabaseUrlOverride(
+        "postgresql://setwin:setwin@127.0.0.1:5432/setwin",
+        "postgresql+psycopg://setwin:setwin@127.0.0.1:5432/setwin",
+      ),
+    ).toBeUndefined();
   });
 
   it("defaults LLM request logging off and accepts overrides", () => {

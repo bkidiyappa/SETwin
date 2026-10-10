@@ -1,11 +1,15 @@
-import { writeSync } from "node:fs";
+import { mkdirSync, writeFileSync, writeSync } from "node:fs";
+import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { Command, CommanderError } from "commander";
 import {
   VERSION,
+  explainDatabaseUrlOverride,
+  findProjectRoot,
   getLogger,
   getSettings,
+  readEnvFileValue,
   setCorrelationId,
   setupLogging,
 } from "@setwin/config";
@@ -96,10 +100,21 @@ export type CliIo = {
   error: (message: string) => void;
 };
 
-function reportError(io: CliIo, message: string): void {
-  writeSync(2, message.endsWith("\n") ? message : `${message}\n`);
+function reportError(io: CliIo, message: string, persist = false): void {
+  const line = message.endsWith("\n") ? message : `${message}\n`;
+  writeSync(2, line);
   if (io.error !== console.error) {
     io.error(message);
+  }
+  if (!persist) {
+    return;
+  }
+  try {
+    const dir = path.join(findProjectRoot(), "logs");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "init-failure.log"), line);
+  } catch {
+    // The terminal already has the same text.
   }
 }
 
@@ -140,11 +155,20 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
     .command("init")
     .description("Create local workspace directories and apply database migrations.")
     .action(async () => {
+      const settings = getSettings();
+      reportError(io, `SETwin init using ${settings.databaseUrlRedacted}`);
+      const overrideNote = explainDatabaseUrlOverride(
+        settings.databaseUrl,
+        readEnvFileValue("SETWIN_DATABASE_URL"),
+      );
+      if (overrideNote) {
+        reportError(io, overrideNote, true);
+      }
       let result;
       try {
         result = await initialize();
       } catch (error) {
-        reportError(io, explainInitFailure(getSettings().databaseUrl, error));
+        reportError(io, explainInitFailure(getSettings().databaseUrl, error), true);
         throw new CommanderError(1, "initFailed", "init failed");
       }
       getLogger().debug({ initialized: !result.alreadyInitialized }, "init completed");
@@ -157,6 +181,7 @@ export function createProgram(io: CliIo = { log: console.log, error: console.err
             result.databaseDetail,
             process.env.SETWIN_DATABASE_URL,
           ),
+          true,
         );
         throw new CommanderError(1, "databaseUnreachable", result.message);
       }
